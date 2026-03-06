@@ -7,6 +7,7 @@ use crate::types::{
     CreateProposalInput, CreateWorkflowInput, FsDiffInput, FsDiffLine, FsDiffResponse, FsMoveInput,
     FsQuery, FsReadResponse, FsSearchMatch, FsSearchQuery, FsTreeEntry, FsWriteInput,
     OfficeOpenInput, OfficeSaveInput, OfficeVersionResponse, OnlyOfficeCallbackInput,
+    PdfAnnotateInput, PdfOperationResponse, PdfPreviewInput, PdfReplaceTextInput, PdfSaveVersionInput,
     RetryRunInput, RunEventsQuery, RunListQuery, RunWorkflowInput, TerminalSessionResponse,
     TerminalStartInput,
     UpdateWorkflowStatusInput, UpsertMemoryInput, UpsertSkillInput,
@@ -79,6 +80,10 @@ pub fn build_router(service: CoreService) -> Router {
         .route("/api/v1/office/save", post(office_save))
         .route("/api/v1/office/version", get(office_versions))
         .route("/api/v1/office/onlyoffice/callback", post(onlyoffice_callback))
+        .route("/api/v1/office/pdf/preview", post(pdf_preview))
+        .route("/api/v1/office/pdf/annotate", post(pdf_annotate))
+        .route("/api/v1/office/pdf/replace", post(pdf_replace_text))
+        .route("/api/v1/office/pdf/save-version", post(pdf_save_version))
         .with_state(ApiState {
             service,
             terminal_sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -512,18 +517,7 @@ async fn office_save(
     Json(input): Json<OfficeSaveInput>,
 ) -> Result<Json<ApiEnvelope<Value>>, ApiHttpError> {
     let target = resolve_workspace_path(state.service.workspace_root(), &input.path)?;
-    if tokio::fs::try_exists(&target).await.unwrap_or(false) {
-        let previous = tokio::fs::read(&target)
-            .await
-            .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
-        let version_name = format!("{}_{}", input.path, Utc::now().timestamp());
-        state
-            .service
-            .repo()
-            .insert_office_version(&input.path, &version_name, &previous)
-            .await
-            .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
-    }
+    save_previous_version_if_exists(&state, &input.path, &target).await?;
     fs_write(
         State(state),
         Json(FsWriteInput {
@@ -551,12 +545,133 @@ async fn office_versions(
 }
 
 async fn onlyoffice_callback(
+    State(state): State<ApiState>,
     Json(input): Json<OnlyOfficeCallbackInput>,
 ) -> Result<Json<ApiEnvelope<Value>>, ApiHttpError> {
+    let path = input
+        .payload
+        .get("path")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let content_base64 = input
+        .payload
+        .get("content_base64")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+
+    if let (Some(path), Some(content_base64)) = (path, content_base64) {
+        let target = resolve_workspace_path(state.service.workspace_root(), &path)?;
+        save_previous_version_if_exists(&state, &path, &target).await?;
+        let _ = fs_write(
+            State(state),
+            Json(FsWriteInput {
+                path: path.clone(),
+                content_base64,
+            }),
+        )
+        .await?;
+        return Ok(ok(json!({
+            "accepted": true,
+            "saved": true,
+            "path": path
+        })));
+    }
+
     Ok(ok(json!({
         "accepted": true,
         "echo": input.payload
     })))
+}
+
+async fn pdf_preview(
+    State(state): State<ApiState>,
+    Json(input): Json<PdfPreviewInput>,
+) -> Result<Json<ApiEnvelope<FsReadResponse>>, ApiHttpError> {
+    fs_read(State(state), Query(FsQuery { path: input.path })).await
+}
+
+async fn pdf_annotate(
+    State(state): State<ApiState>,
+    Json(input): Json<PdfAnnotateInput>,
+) -> Result<Json<ApiEnvelope<PdfOperationResponse>>, ApiHttpError> {
+    let target = resolve_workspace_path(state.service.workspace_root(), &input.path)?;
+    save_previous_version_if_exists(&state, &input.path, &target).await?;
+
+    let annotation_target = target.with_extension("pdf.annotations.txt");
+    let line = format!(
+        "{} | {}\n",
+        Utc::now().to_rfc3339(),
+        input.annotation.replace('\n', " ")
+    );
+    if let Some(parent) = annotation_target.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+    }
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&annotation_target)
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+    use tokio::io::AsyncWriteExt;
+    file.write_all(line.as_bytes())
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+    file.flush()
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+
+    let version_name = format!("{}_annotate_{}", input.path, Utc::now().timestamp());
+    Ok(ok(PdfOperationResponse {
+        path: input.path,
+        replaced_count: 0,
+        version_name,
+    }))
+}
+
+async fn pdf_replace_text(
+    State(state): State<ApiState>,
+    Json(input): Json<PdfReplaceTextInput>,
+) -> Result<Json<ApiEnvelope<PdfOperationResponse>>, ApiHttpError> {
+    if input.search.is_empty() {
+        return Err(ApiHttpError::from(CoreError::BadRequest(
+            "search must not be empty".into(),
+        )));
+    }
+
+    let target = resolve_workspace_path(state.service.workspace_root(), &input.path)?;
+    save_previous_version_if_exists(&state, &input.path, &target).await?;
+
+    let bytes = tokio::fs::read(&target)
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+    let content = String::from_utf8_lossy(&bytes);
+    let replaced_count = content.matches(&input.search).count();
+    let replaced = content.replace(&input.search, &input.replace);
+    tokio::fs::write(&target, replaced.as_bytes())
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+
+    let version_name = format!("{}_replace_{}", input.path, Utc::now().timestamp());
+    Ok(ok(PdfOperationResponse {
+        path: input.path,
+        replaced_count,
+        version_name,
+    }))
+}
+
+async fn pdf_save_version(
+    State(state): State<ApiState>,
+    Json(input): Json<PdfSaveVersionInput>,
+) -> Result<Json<ApiEnvelope<PdfOperationResponse>>, ApiHttpError> {
+    let target = resolve_workspace_path(state.service.workspace_root(), &input.path)?;
+    let version_name = save_previous_version_if_exists(&state, &input.path, &target).await?;
+    Ok(ok(PdfOperationResponse {
+        path: input.path,
+        replaced_count: 0,
+        version_name,
+    }))
 }
 
 async fn list_runs(
@@ -648,6 +763,29 @@ async fn retry_run(
         .await
         .map_err(ApiHttpError::from)?;
     Ok(ok(run))
+}
+
+async fn save_previous_version_if_exists(
+    state: &ApiState,
+    logical_path: &str,
+    target_path: &PathBuf,
+) -> Result<String, ApiHttpError> {
+    let version_name = format!("{}_{}", logical_path, Utc::now().timestamp());
+    if tokio::fs::try_exists(target_path)
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?
+    {
+        let previous = tokio::fs::read(target_path)
+            .await
+            .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+        state
+            .service
+            .repo()
+            .insert_office_version(logical_path, &version_name, &previous)
+            .await
+            .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+    }
+    Ok(version_name)
 }
 
 fn resolve_workspace_path(

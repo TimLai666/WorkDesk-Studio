@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="WorkDesk Studio"
+    Language="1033"
+    Version="$(var.ProductVersion)"
+    Manufacturer="WorkDesk Studio"
+    UpgradeCode="{A4EC7B9E-8A71-4F56-9B82-5F83E650C68F}">
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      Platform="x64" />
+
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of WorkDesk Studio is already installed."
+      Schedule="afterInstallInitialize" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="WorkDesk Studio" Level="1">
+      <ComponentGroupRef Id="PayloadComponents" />
+    </Feature>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="WorkDesk Studio" />
+      </Directory>
+    </Directory>
+  </Product>
+</Wix>

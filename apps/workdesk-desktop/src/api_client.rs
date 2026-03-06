@@ -6,7 +6,7 @@ use serde_json::Value;
 use workdesk_core::{
     AuthLoginInput, AuthSessionResponse, CancelRunInput, RetryRunInput, RunSkillSnapshot,
     RunWorkflowInput, TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowRun,
-    WorkflowRunEvent, WorkflowRunNodeState,
+    WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus, UpdateWorkflowStatusInput,
 };
 
 #[derive(Debug, Clone)]
@@ -58,6 +58,22 @@ impl ApiClient {
             .send()
             .await
             .context("request workflows")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn update_workflow_status(
+        &self,
+        workflow_id: &str,
+        status: WorkflowStatus,
+    ) -> Result<WorkflowDefinition> {
+        let url = self.endpoint(&format!("/api/v1/workflows/{workflow_id}/status"))?;
+        let response = self
+            .http
+            .patch(url)
+            .json(&UpdateWorkflowStatusInput { status })
+            .send()
+            .await
+            .with_context(|| format!("update workflow status for {workflow_id}"))?;
         parse_envelope(response).await
     }
 
@@ -191,6 +207,78 @@ impl ApiClient {
         parse_envelope(response).await
     }
 
+    pub async fn fs_tree(&self, path: &str) -> Result<Vec<workdesk_core::FsTreeEntry>> {
+        let url = self.endpoint(&format!(
+            "/api/v1/fs/tree?path={}",
+            urlencoding::encode(path)
+        ))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("request fs tree")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn fs_read(&self, path: &str) -> Result<workdesk_core::FsReadResponse> {
+        let url = self.endpoint(&format!(
+            "/api/v1/fs/file?path={}",
+            urlencoding::encode(path)
+        ))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("request fs read")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn fs_write(&self, path: &str, content_base64: String) -> Result<Value> {
+        let url = self.endpoint("/api/v1/fs/file")?;
+        let response = self
+            .http
+            .put(url)
+            .json(&workdesk_core::FsWriteInput {
+                path: path.to_string(),
+                content_base64,
+            })
+            .send()
+            .await
+            .context("request fs write")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn fs_move(&self, from: &str, to: &str) -> Result<Value> {
+        let url = self.endpoint("/api/v1/fs/move")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&workdesk_core::FsMoveInput {
+                from: from.to_string(),
+                to: to.to_string(),
+            })
+            .send()
+            .await
+            .context("request fs move")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn fs_delete(&self, path: &str) -> Result<Value> {
+        let url = self.endpoint(&format!(
+            "/api/v1/fs/path?path={}",
+            urlencoding::encode(path)
+        ))?;
+        let response = self
+            .http
+            .delete(url)
+            .send()
+            .await
+            .context("request fs delete")?;
+        parse_envelope(response).await
+    }
+
     pub async fn fs_diff(&self, left_path: &str, right_path: &str) -> Result<workdesk_core::FsDiffResponse> {
         let url = self.endpoint("/api/v1/fs/diff")?;
         let response = self
@@ -226,6 +314,117 @@ impl ApiClient {
             .send()
             .await
             .context("request terminal session")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn office_open(&self, path: &str) -> Result<workdesk_core::FsReadResponse> {
+        let url = self.endpoint("/api/v1/office/open")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&workdesk_core::OfficeOpenInput {
+                path: path.to_string(),
+            })
+            .send()
+            .await
+            .context("request office open")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn office_save(&self, path: &str, content_base64: String) -> Result<Value> {
+        let url = self.endpoint("/api/v1/office/save")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&workdesk_core::OfficeSaveInput {
+                path: path.to_string(),
+                content_base64,
+            })
+            .send()
+            .await
+            .context("request office save")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn office_versions(&self, path: &str) -> Result<workdesk_core::OfficeVersionResponse> {
+        let url = self.endpoint(&format!(
+            "/api/v1/office/version?path={}",
+            urlencoding::encode(path)
+        ))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("request office versions")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn pdf_preview(&self, path: &str) -> Result<workdesk_core::FsReadResponse> {
+        let url = self.endpoint("/api/v1/office/pdf/preview")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&workdesk_core::PdfPreviewInput {
+                path: path.to_string(),
+            })
+            .send()
+            .await
+            .context("request pdf preview")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn pdf_annotate(
+        &self,
+        path: &str,
+        annotation: &str,
+    ) -> Result<workdesk_core::PdfOperationResponse> {
+        let url = self.endpoint("/api/v1/office/pdf/annotate")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&workdesk_core::PdfAnnotateInput {
+                path: path.to_string(),
+                annotation: annotation.to_string(),
+            })
+            .send()
+            .await
+            .context("request pdf annotate")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn pdf_replace_text(
+        &self,
+        path: &str,
+        search: &str,
+        replace: &str,
+    ) -> Result<workdesk_core::PdfOperationResponse> {
+        let url = self.endpoint("/api/v1/office/pdf/replace")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&workdesk_core::PdfReplaceTextInput {
+                path: path.to_string(),
+                search: search.to_string(),
+                replace: replace.to_string(),
+            })
+            .send()
+            .await
+            .context("request pdf replace text")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn pdf_save_version(&self, path: &str) -> Result<workdesk_core::PdfOperationResponse> {
+        let url = self.endpoint("/api/v1/office/pdf/save-version")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&workdesk_core::PdfSaveVersionInput {
+                path: path.to_string(),
+            })
+            .send()
+            .await
+            .context("request pdf save version")?;
         parse_envelope(response).await
     }
 

@@ -1,5 +1,6 @@
 param(
   [string]$Target = "x86_64-pc-windows-msvc",
+  [string]$ProductVersion = "0.1.0",
   [switch]$BuildMsi
 )
 
@@ -26,11 +27,16 @@ Copy-Item "target\$Target\release\workdesk-runner.exe" (Join-Path $payloadDir "w
 Write-Host "Installer payload prepared at $payloadDir"
 
 if ($BuildMsi) {
-  $wixObj = Join-Path $distRoot "WorkDeskStudio.wixobj"
+  $wixDir = Join-Path $PSScriptRoot "wix"
+  $payloadWxs = Join-Path $distRoot "Payload.wxs"
+  $productWixObj = Join-Path $distRoot "Product.wixobj"
+  $payloadWixObj = Join-Path $distRoot "Payload.wixobj"
   $wixMsi = Join-Path $distRoot "WorkDeskStudio.msi"
+  & (Join-Path $wixDir "Harvest-Payload.ps1") -PayloadDir $payloadDir -OutputPath $payloadWxs
   if (Get-Command candle.exe -ErrorAction SilentlyContinue) {
-    candle.exe -o $wixObj "$PSScriptRoot\\wix\\Product.wxs"
-    light.exe -o $wixMsi $wixObj
+    candle.exe -dProductVersion=$ProductVersion -out $productWixObj (Join-Path $wixDir "Product.wxs")
+    candle.exe -dProductVersion=$ProductVersion -out $payloadWixObj $payloadWxs
+    light.exe -o $wixMsi $productWixObj $payloadWixObj
     Write-Host "MSI generated: $wixMsi"
   } else {
     Write-Warning "WiX not found (candle.exe/light.exe). Install WiX Toolset to build MSI."

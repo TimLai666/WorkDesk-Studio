@@ -3,5 +3,7 @@ pub mod automation;
 pub mod command;
 pub mod command_bus;
 pub mod controller;
+pub mod onlyoffice;
+pub mod sidecar_supervisor;
 pub mod single_instance;
 pub mod ui;

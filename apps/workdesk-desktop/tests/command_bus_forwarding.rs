@@ -1,12 +1,15 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use base64::Engine;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use workdesk_core::{
-    RunNodeStatus, RunSkillSnapshot, RunStatus, Scope, WorkflowRun, WorkflowRunEvent,
-    WorkflowRunNodeState,
+    FsDiffResponse, FsReadResponse, FsSearchMatch, FsTreeEntry, OfficeVersionResponse,
+    PdfOperationResponse, RunNodeStatus, RunSkillSnapshot, RunStatus, Scope,
+    TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowRun,
+    WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
 };
 use workdesk_desktop::command::DesktopCommand;
 use workdesk_desktop::command_bus::{CommandBusClient, CommandBusServer};
@@ -80,6 +83,26 @@ impl FakeDesktopApi {
 
 #[async_trait]
 impl DesktopApi for FakeDesktopApi {
+    async fn list_workflows(&self) -> Result<Vec<WorkflowDefinition>> {
+        Ok(Vec::new())
+    }
+
+    async fn update_workflow_status(
+        &self,
+        workflow_id: &str,
+        status: WorkflowStatus,
+    ) -> Result<WorkflowDefinition> {
+        Ok(WorkflowDefinition {
+            id: workflow_id.to_string(),
+            name: workflow_id.to_string(),
+            timezone: "Asia/Taipei".into(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            version: 1,
+            status,
+        })
+    }
+
     async fn list_runs(&self, _limit: usize) -> Result<Vec<WorkflowRun>> {
         Ok(self.runs.lock().expect("runs lock").clone())
     }
@@ -160,6 +183,121 @@ impl DesktopApi for FakeDesktopApi {
             .map(|item| item.workflow_id.clone())
             .unwrap_or_else(|| "wf-1".into());
         self.run_workflow(&workflow_id, requested_by).await
+    }
+
+    async fn fs_tree(&self, _path: &str) -> Result<Vec<FsTreeEntry>> {
+        Ok(vec![FsTreeEntry {
+            path: ".".into(),
+            is_dir: true,
+        }])
+    }
+
+    async fn fs_read(&self, path: &str) -> Result<FsReadResponse> {
+        Ok(FsReadResponse {
+            path: path.to_string(),
+            content_base64: base64::engine::general_purpose::STANDARD.encode("hello"),
+        })
+    }
+
+    async fn fs_write(&self, _path: &str, _content_base64: String) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn fs_move(&self, _from: &str, _to: &str) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn fs_delete(&self, _path: &str) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn fs_search(
+        &self,
+        _path: &str,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<Vec<FsSearchMatch>> {
+        Ok(Vec::new())
+    }
+
+    async fn fs_diff(&self, _left_path: &str, _right_path: &str) -> Result<FsDiffResponse> {
+        Ok(FsDiffResponse {
+            left_path: "left".into(),
+            right_path: "right".into(),
+            hunks: Vec::new(),
+        })
+    }
+
+    async fn terminal_start(&self, _input: &TerminalStartInput) -> Result<TerminalSessionResponse> {
+        Ok(TerminalSessionResponse {
+            session_id: "terminal-1".into(),
+            status: "exited".into(),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(0),
+        })
+    }
+
+    async fn terminal_session(&self, _session_id: &str) -> Result<TerminalSessionResponse> {
+        Ok(TerminalSessionResponse {
+            session_id: "terminal-1".into(),
+            status: "exited".into(),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(0),
+        })
+    }
+
+    async fn office_open(&self, path: &str) -> Result<FsReadResponse> {
+        self.fs_read(path).await
+    }
+
+    async fn office_save(
+        &self,
+        _path: &str,
+        _content_base64: String,
+    ) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn office_versions(&self, path: &str) -> Result<OfficeVersionResponse> {
+        Ok(OfficeVersionResponse {
+            path: path.to_string(),
+            versions: vec!["v1".into()],
+        })
+    }
+
+    async fn pdf_preview(&self, path: &str) -> Result<FsReadResponse> {
+        self.fs_read(path).await
+    }
+
+    async fn pdf_annotate(&self, path: &str, _annotation: &str) -> Result<PdfOperationResponse> {
+        Ok(PdfOperationResponse {
+            path: path.to_string(),
+            replaced_count: 0,
+            version_name: "v2".into(),
+        })
+    }
+
+    async fn pdf_replace_text(
+        &self,
+        path: &str,
+        _search: &str,
+        _replace: &str,
+    ) -> Result<PdfOperationResponse> {
+        Ok(PdfOperationResponse {
+            path: path.to_string(),
+            replaced_count: 1,
+            version_name: "v3".into(),
+        })
+    }
+
+    async fn pdf_save_version(&self, path: &str) -> Result<PdfOperationResponse> {
+        Ok(PdfOperationResponse {
+            path: path.to_string(),
+            replaced_count: 0,
+            version_name: "v4".into(),
+        })
     }
 }
 

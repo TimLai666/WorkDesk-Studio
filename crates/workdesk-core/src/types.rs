@@ -181,6 +181,36 @@ pub struct OfficeVersionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdfPreviewInput {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdfAnnotateInput {
+    pub path: String,
+    pub annotation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdfReplaceTextInput {
+    pub path: String,
+    pub search: String,
+    pub replace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdfSaveVersionInput {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdfOperationResponse {
+    pub path: String,
+    pub replaced_count: usize,
+    pub version_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunWorkflowResponse {
     pub run_id: String,
     pub workflow_id: String,

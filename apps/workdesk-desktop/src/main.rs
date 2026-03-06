@@ -10,6 +10,8 @@ use workdesk_desktop::automation::AutomationServer;
 use workdesk_desktop::command::DesktopCli;
 use workdesk_desktop::command_bus::{CommandBusClient, CommandBusServer};
 use workdesk_desktop::controller::DesktopAppController;
+use workdesk_desktop::onlyoffice::{OnlyOfficeLauncher, OnlyOfficeLauncherConfig};
+use workdesk_desktop::sidecar_supervisor::{SidecarSupervisor, SidecarSupervisorConfig};
 use workdesk_desktop::single_instance::{acquire_single_instance, InstanceAcquireResult};
 use workdesk_desktop::ui;
 use workdesk_runner::{RunnerConfig, WorkflowRunnerDaemon};
@@ -31,6 +33,10 @@ async fn main() -> Result<()> {
     let cli = DesktopCli::parse_from(std::env::args())?;
     let locale = std::env::var("WORKDESK_LOCALE").unwrap_or_else(|_| "zh-TW".into());
     let bundle = load_locale_bundle(&locale)?;
+    let app_config = AppConfig::from_env()?;
+    let sidecar_config = SidecarSupervisorConfig::from_app_config(&app_config);
+    let onlyoffice_config = OnlyOfficeLauncherConfig::from_app_config(&app_config);
+    std::env::set_var("WORKDESK_SIDECAR_ENDPOINT", &sidecar_config.endpoint);
     info!("starting {}", bundle.app_name);
 
     let instance_guard = match acquire_single_instance()? {
@@ -64,7 +70,6 @@ async fn main() -> Result<()> {
             .context("parse WORKDESK_CORE_BIND")?;
         let workspace_root =
             std::env::var("WORKDESK_WORKSPACE_ROOT").unwrap_or_else(|_| ".".into());
-        let app_config = AppConfig::from_env()?;
         let tools_root = std::env::var("WORKDESK_TOOLS_ROOT")
             .map(PathBuf::from)
             .unwrap_or_else(|_| default_tools_root());
@@ -110,6 +115,26 @@ async fn main() -> Result<()> {
     let controller = DesktopAppController::new(Arc::new(api_client.clone()));
     controller.bootstrap().await?;
     controller.dispatch_command(cli.command.clone()).await?;
+
+    let sidecar_controller = controller.clone();
+    background.push(tokio::spawn(async move {
+        if let Err(error) = SidecarSupervisor::new(sidecar_config)
+            .run(sidecar_controller)
+            .await
+        {
+            error!("sidecar supervisor exited: {error:#}");
+        }
+    }));
+
+    let onlyoffice_controller = controller.clone();
+    background.push(tokio::spawn(async move {
+        if let Err(error) = OnlyOfficeLauncher::new(onlyoffice_config)
+            .run(onlyoffice_controller)
+            .await
+        {
+            error!("onlyoffice launcher exited: {error:#}");
+        }
+    }));
 
     let command_server_controller = controller.clone();
     background.push(tokio::spawn(async move {

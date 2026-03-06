@@ -3,6 +3,7 @@ pub mod sidecar;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -47,6 +48,17 @@ pub struct ToolchainManifest {
     pub records: Vec<ManagedToolchainRecord>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ToolchainReleaseFeed {
+    pub channels: Vec<ToolchainReleaseChannel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolchainReleaseChannel {
+    pub name: String,
+    pub records: Vec<ManagedToolchainRecord>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolchainManager {
     tools_root: PathBuf,
@@ -69,22 +81,11 @@ impl ToolchainManager {
     }
 
     pub fn binary_dir(&self, binary: ToolchainBinary) -> PathBuf {
-        let name = match binary {
-            ToolchainBinary::Codex => "codex",
-            ToolchainBinary::Uv => "uv",
-            ToolchainBinary::Bun => "bun",
-            ToolchainBinary::Go => "go",
-        };
-        self.tools_root.join(name)
+        self.tools_root.join(Self::binary_slug(binary))
     }
 
     pub fn binary_path(&self, binary: ToolchainBinary) -> PathBuf {
-        let executable = match binary {
-            ToolchainBinary::Codex => "codex.exe",
-            ToolchainBinary::Uv => "uv.exe",
-            ToolchainBinary::Bun => "bun.exe",
-            ToolchainBinary::Go => "go.exe",
-        };
+        let executable = format!("{}.exe", Self::binary_slug(binary));
         self.binary_dir(binary).join(executable)
     }
 
@@ -223,6 +224,139 @@ impl ToolchainManager {
         }
         tokio::fs::rename(&backup, &current).await?;
         Ok(true)
+    }
+
+    pub async fn load_release_feed(&self, source: &str) -> Result<ToolchainReleaseFeed> {
+        let raw = self.read_source_bytes(source).await?;
+        serde_json::from_slice(&raw).with_context(|| format!("parse release feed from {source}"))
+    }
+
+    pub async fn install_from_release_feed(
+        &self,
+        binary: ToolchainBinary,
+        channel: &str,
+        feed_source: &str,
+        manifest_path: &PathBuf,
+    ) -> Result<ManagedToolchainRecord> {
+        let feed = self.load_release_feed(feed_source).await?;
+        let record = self.select_release_record(&feed, binary, channel)?;
+        let payload = self.read_source_bytes(&record.source).await?;
+        let had_existing_binary = self.binary_path(binary).exists();
+
+        self.stage_for_update(binary).await?;
+
+        let install_result = async {
+            self.verify_checksum(&payload, &record.checksum_sha256)?;
+            let binary_path = self.binary_path(binary);
+            if let Some(parent) = binary_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            tokio::fs::write(&binary_path, &payload)
+                .await
+                .with_context(|| format!("write managed binary {}", binary_path.display()))?;
+
+            let mut manifest = self.load_manifest(manifest_path).await?;
+            upsert_manifest_record(&mut manifest.records, record.clone());
+            self.save_manifest(manifest_path, &manifest).await?;
+            Ok::<ManagedToolchainRecord, anyhow::Error>(record.clone())
+        }
+        .await;
+
+        match install_result {
+            Ok(record) => Ok(record),
+            Err(error) => {
+                if had_existing_binary {
+                    let _ = self.rollback_binary(binary).await;
+                } else {
+                    let current = self.binary_path(binary);
+                    if current.exists() {
+                        let _ = tokio::fs::remove_file(&current).await;
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn select_release_record(
+        &self,
+        feed: &ToolchainReleaseFeed,
+        binary: ToolchainBinary,
+        channel: &str,
+    ) -> Result<ManagedToolchainRecord> {
+        let channel_record = feed
+            .channels
+            .iter()
+            .find(|item| item.name == channel)
+            .ok_or_else(|| anyhow!("release channel not found: {channel}"))?;
+        channel_record
+            .records
+            .iter()
+            .find(|item| item.binary == Self::binary_slug(binary))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "release record not found for {} in channel {channel}",
+                    Self::binary_slug(binary)
+                )
+            })
+    }
+
+    async fn read_source_bytes(&self, source: &str) -> Result<Vec<u8>> {
+        if source.starts_with("http://") || source.starts_with("https://") {
+            let response = reqwest::get(source)
+                .await
+                .with_context(|| format!("download release source {source}"))?
+                .error_for_status()
+                .with_context(|| format!("release source returned error status: {source}"))?;
+            let body = response
+                .bytes()
+                .await
+                .with_context(|| format!("read release source body {source}"))?;
+            return Ok(body.to_vec());
+        }
+
+        let path = source
+            .strip_prefix("file://")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(source));
+        tokio::fs::read(&path)
+            .await
+            .with_context(|| format!("read release source {}", path.display()))
+    }
+
+    fn verify_checksum(&self, payload: &[u8], expected_sha256: &str) -> Result<()> {
+        let expected = expected_sha256.trim();
+        if expected.is_empty() {
+            return Err(anyhow!("checksum is required for managed toolchain install"));
+        }
+        let actual = format!("{:x}", Sha256::digest(payload));
+        if actual.eq_ignore_ascii_case(expected) {
+            return Ok(());
+        }
+        Err(anyhow!(
+            "checksum mismatch: expected {expected}, got {actual}"
+        ))
+    }
+
+    fn binary_slug(binary: ToolchainBinary) -> &'static str {
+        match binary {
+            ToolchainBinary::Codex => "codex",
+            ToolchainBinary::Uv => "uv",
+            ToolchainBinary::Bun => "bun",
+            ToolchainBinary::Go => "go",
+        }
+    }
+}
+
+fn upsert_manifest_record(
+    records: &mut Vec<ManagedToolchainRecord>,
+    record: ManagedToolchainRecord,
+) {
+    if let Some(existing) = records.iter_mut().find(|item| item.binary == record.binary) {
+        *existing = record;
+    } else {
+        records.push(record);
     }
 }
 
