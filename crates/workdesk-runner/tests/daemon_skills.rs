@@ -43,7 +43,9 @@ async fn daemon_materializes_skill_snapshots_before_finishing_run() {
         status: WorkflowStatus::Draft,
         agent_defaults: None,
     };
-    repo.create_workflow(&workflow).await.expect("create workflow");
+    repo.create_workflow(&workflow)
+        .await
+        .expect("create workflow");
     repo.upsert_skill(&SkillRecord {
         scope: Scope::User,
         name: "deploy".into(),

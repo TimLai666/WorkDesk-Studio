@@ -139,7 +139,10 @@ async fn proposal_must_be_pending_to_approve() {
         .propose_workflow_change(
             workflow.id.clone(),
             CreateProposalInput {
-                diff: "diff".into(),
+                diff: serde_json::json!({
+                    "name": "ops-v2"
+                })
+                .to_string(),
                 created_by_agent: "agent".into(),
             },
         )
@@ -149,6 +152,12 @@ async fn proposal_must_be_pending_to_approve() {
         .approve_proposal(&proposal.proposal_id, "human".into())
         .await
         .expect("first approval");
+    let updated = service
+        .get_workflow(&workflow.id)
+        .await
+        .expect("load updated workflow");
+    assert_eq!(updated.name, "ops-v2");
+    assert_eq!(updated.version, 2);
 
     let err = service
         .approve_proposal(&proposal.proposal_id, "human".into())

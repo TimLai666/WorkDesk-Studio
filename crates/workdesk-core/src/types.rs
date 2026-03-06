@@ -32,6 +32,20 @@ pub struct CreateWorkflowInput {
     pub edges: Vec<WorkflowEdge>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PatchWorkflowInput {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub agent_defaults: Option<WorkflowAgentDefaults>,
+    #[serde(default)]
+    pub nodes: Option<Vec<WorkflowNodeInput>>,
+    #[serde(default)]
+    pub edges: Option<Vec<WorkflowEdge>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateWorkflowStatusInput {
     pub status: WorkflowStatus,

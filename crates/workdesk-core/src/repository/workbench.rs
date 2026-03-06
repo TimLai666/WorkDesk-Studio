@@ -1,5 +1,7 @@
 use super::*;
-use crate::types::{AgentWorkspaceMessageRole, ChoicePromptOption, ChoicePromptStatus, CodexNativeSessionConfig};
+use crate::types::{
+    AgentWorkspaceMessageRole, ChoicePromptOption, ChoicePromptStatus, CodexNativeSessionConfig,
+};
 
 impl SqliteCoreRepository {
     fn map_agent_workspace_session_row(
@@ -165,7 +167,9 @@ impl SqliteCoreRepository {
                 Ok(AgentWorkspaceMessage {
                     message_id: row.try_get("message_id")?,
                     session_id: row.try_get("session_id")?,
-                    role: Self::map_agent_workspace_message_role(&row.try_get::<String, _>("role")?)?,
+                    role: Self::map_agent_workspace_message_role(
+                        &row.try_get::<String, _>("role")?,
+                    )?,
                     content: row.try_get("content")?,
                     created_at: parse_rfc3339_utc(&row.try_get::<String, _>("created_at")?)?,
                 })
@@ -255,7 +259,10 @@ impl SqliteCoreRepository {
         }
     }
 
-    pub(crate) async fn list_choice_prompts_impl(&self, session_id: &str) -> Result<Vec<ChoicePrompt>> {
+    pub(crate) async fn list_choice_prompts_impl(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<ChoicePrompt>> {
         let rows = sqlx::query(
             "SELECT prompt_id, session_id, question, recommended_option_id, allow_freeform, status, selected_option_id, freeform_answer, created_at, answered_at
              FROM agent_workspace_choice_prompts

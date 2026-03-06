@@ -130,9 +130,11 @@ async fn handle_request(
             let prompt_id = payload_string(&request.payload, "prompt_id");
             let option_id = payload_string(&request.payload, "option_id");
             match (session_id, prompt_id, option_id) {
-                (Ok(session_id), Ok(prompt_id), Ok(option_id)) => controller
-                    .answer_choice_prompt_option(&session_id, &prompt_id, &option_id)
-                    .await,
+                (Ok(session_id), Ok(prompt_id), Ok(option_id)) => {
+                    controller
+                        .answer_choice_prompt_option(&session_id, &prompt_id, &option_id)
+                        .await
+                }
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
@@ -141,9 +143,11 @@ async fn handle_request(
             let prompt_id = payload_string(&request.payload, "prompt_id");
             let text = payload_string(&request.payload, "text");
             match (session_id, prompt_id, text) {
-                (Ok(session_id), Ok(prompt_id), Ok(text)) => controller
-                    .answer_choice_prompt_text(&session_id, &prompt_id, &text)
-                    .await,
+                (Ok(session_id), Ok(prompt_id), Ok(text)) => {
+                    controller
+                        .answer_choice_prompt_text(&session_id, &prompt_id, &text)
+                        .await
+                }
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }

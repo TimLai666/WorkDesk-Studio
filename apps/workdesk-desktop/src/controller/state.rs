@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use workdesk_core::{
-    AgentWorkspaceMessage, AgentWorkspaceSession, ChoicePrompt, CodexModelCapability,
-    FsDiffResponse, FsSearchMatch, FsTreeEntry, PdfOperationResponse, RunSkillSnapshot,
-    TerminalSessionResponse, WorkflowDefinition, WorkflowEdge, WorkflowNodeKind, WorkflowRun,
-    WorkflowRunEvent, WorkflowRunNodeState,
+    AgentWorkspaceMessage, AgentWorkspaceSession, AuthSessionResponse, ChoicePrompt,
+    CodexModelCapability, FsDiffResponse, FsSearchMatch, FsTreeEntry, PdfOperationResponse,
+    RunSkillSnapshot, TerminalSessionResponse, WorkflowDefinition, WorkflowEdge, WorkflowNodeKind,
+    WorkflowRun, WorkflowRunEvent, WorkflowRunNodeState,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,9 +58,12 @@ pub struct UiStateSnapshot {
     pub office_path: Option<String>,
     pub office_content_base64: Option<String>,
     pub office_editor_text: String,
+    pub office_embed_url: Option<String>,
     pub office_versions: Vec<String>,
     pub pdf_last_operation: Option<PdfOperationResponse>,
     pub diagnostics: Vec<UiDiagnostic>,
+    pub auth_account_id: Option<String>,
+    pub auth_session_token: Option<String>,
     pub agent_sessions: Vec<AgentWorkspaceSession>,
     pub active_agent_session_id: Option<String>,
     pub agent_messages: Vec<AgentWorkspaceMessage>,
@@ -97,9 +100,12 @@ impl Default for UiStateSnapshot {
             office_path: None,
             office_content_base64: None,
             office_editor_text: String::new(),
+            office_embed_url: None,
             office_versions: Vec::new(),
             pdf_last_operation: None,
             diagnostics: Vec::new(),
+            auth_account_id: None,
+            auth_session_token: None,
             agent_sessions: Vec::new(),
             active_agent_session_id: None,
             agent_messages: Vec::new(),
@@ -145,10 +151,12 @@ pub enum ControllerAction {
         path: Option<String>,
         content_base64: Option<String>,
         editor_text: String,
+        embed_url: Option<String>,
         versions: Vec<String>,
         pdf_last_operation: Option<PdfOperationResponse>,
     },
     SetDiagnostics(Vec<UiDiagnostic>),
+    SetAuthSession(Option<AuthSessionResponse>),
     SetAgentSessions(Vec<AgentWorkspaceSession>),
     SelectAgentSession(Option<String>),
     SetAgentMessages(Vec<AgentWorkspaceMessage>),
@@ -202,16 +210,22 @@ pub fn reduce_ui_state(state: &mut UiStateSnapshot, action: ControllerAction) {
             path,
             content_base64,
             editor_text,
+            embed_url,
             versions,
             pdf_last_operation,
         } => {
             state.office_path = path;
             state.office_content_base64 = content_base64;
             state.office_editor_text = editor_text;
+            state.office_embed_url = embed_url;
             state.office_versions = versions;
             state.pdf_last_operation = pdf_last_operation;
         }
         ControllerAction::SetDiagnostics(diagnostics) => state.diagnostics = diagnostics,
+        ControllerAction::SetAuthSession(session) => {
+            state.auth_account_id = session.as_ref().map(|value| value.account_id.clone());
+            state.auth_session_token = session.map(|value| value.session_token);
+        }
         ControllerAction::SetAgentSessions(sessions) => {
             state.agent_sessions = sessions;
             if state.active_agent_session_id.is_none() {
@@ -221,7 +235,9 @@ pub fn reduce_ui_state(state: &mut UiStateSnapshot, action: ControllerAction) {
                     .map(|session| session.session_id.clone());
             }
         }
-        ControllerAction::SelectAgentSession(session_id) => state.active_agent_session_id = session_id,
+        ControllerAction::SelectAgentSession(session_id) => {
+            state.active_agent_session_id = session_id
+        }
         ControllerAction::SetAgentMessages(messages) => state.agent_messages = messages,
         ControllerAction::SetChoicePrompts(prompts) => {
             state.pending_choice_prompt = prompts
@@ -230,7 +246,9 @@ pub fn reduce_ui_state(state: &mut UiStateSnapshot, action: ControllerAction) {
                 .cloned();
             state.choice_prompts = prompts;
         }
-        ControllerAction::SetModelCapabilities(capabilities) => state.model_capabilities = capabilities,
+        ControllerAction::SetModelCapabilities(capabilities) => {
+            state.model_capabilities = capabilities
+        }
         ControllerAction::SetError(error) => state.last_error = error,
     }
     state.revision += 1;

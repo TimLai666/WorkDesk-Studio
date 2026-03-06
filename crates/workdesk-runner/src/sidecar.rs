@@ -128,10 +128,7 @@ mod tests {
             .await
             .expect("send request");
         assert!(response.ok);
-        assert_eq!(
-            response.data.expect("response data")["echo_type"],
-            "ping"
-        );
+        assert_eq!(response.data.expect("response data")["echo_type"], "ping");
 
         server.abort();
     }

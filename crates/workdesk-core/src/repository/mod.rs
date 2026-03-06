@@ -39,6 +39,10 @@ pub trait CoreRepository: Send + Sync {
         workflow_id: &str,
         status: crate::types::WorkflowStatus,
     ) -> Result<Option<WorkflowDefinition>>;
+    async fn update_workflow_definition(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<Option<WorkflowDefinition>>;
 
     async fn create_proposal(&self, proposal: &WorkflowChangeProposal) -> Result<()>;
     async fn get_proposal(&self, proposal_id: &str) -> Result<Option<WorkflowChangeProposal>>;
@@ -437,6 +441,77 @@ impl CoreRepository for SqliteCoreRepository {
             return Ok(None);
         }
         self.load_workflow_by_id(workflow_id).await
+    }
+
+    async fn update_workflow_definition(
+        &self,
+        workflow: &WorkflowDefinition,
+    ) -> Result<Option<WorkflowDefinition>> {
+        let mut tx = self.pool.begin().await?;
+        let updated_at = Utc::now().to_rfc3339();
+        let next_version = workflow.version as i64 + 1;
+
+        let updated = sqlx::query(
+            "UPDATE workflows
+             SET name = ?, timezone = ?, version = ?, status = ?, agent_defaults_json = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&workflow.name)
+        .bind(&workflow.timezone)
+        .bind(next_version)
+        .bind(workflow_status_to_db(&workflow.status))
+        .bind(
+            workflow
+                .agent_defaults
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+        )
+        .bind(&updated_at)
+        .bind(&workflow.id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+
+        sqlx::query("DELETE FROM workflow_nodes WHERE workflow_id = ?")
+            .bind(&workflow.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM workflow_edges WHERE workflow_id = ?")
+            .bind(&workflow.id)
+            .execute(&mut *tx)
+            .await?;
+
+        for node in &workflow.nodes {
+            sqlx::query(
+                "INSERT INTO workflow_nodes (workflow_id, id, kind, x, y, config_json) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&workflow.id)
+            .bind(&node.id)
+            .bind(workflow_kind_to_db(&node.kind))
+            .bind(node.x)
+            .bind(node.y)
+            .bind(node.config.as_ref().map(serde_json::to_string).transpose()?)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        for edge in &workflow.edges {
+            sqlx::query(
+                "INSERT INTO workflow_edges (workflow_id, source_node, target_node) VALUES (?, ?, ?)",
+            )
+            .bind(&workflow.id)
+            .bind(&edge.from)
+            .bind(&edge.to)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        self.load_workflow_by_id(&workflow.id).await
     }
 
     async fn create_proposal(&self, proposal: &WorkflowChangeProposal) -> Result<()> {

@@ -87,10 +87,7 @@ impl SidecarSupervisor {
         } else {
             UiDiagnostic {
                 code: "SIDECAR_UNAVAILABLE".into(),
-                message: format!(
-                    "Sidecar endpoint is not healthy: {}",
-                    self.config.endpoint
-                ),
+                message: format!("Sidecar endpoint is not healthy: {}", self.config.endpoint),
                 run_id: None,
             }
         };
@@ -139,16 +136,20 @@ impl SidecarSupervisor {
             command.current_dir(parent);
         }
         command.kill_on_drop(true);
-        let child = command
-            .spawn()
-            .with_context(|| format!("spawn sidecar process {}", self.config.command_path.display()))?;
+        let child = command.spawn().with_context(|| {
+            format!(
+                "spawn sidecar process {}",
+                self.config.command_path.display()
+            )
+        })?;
         debug!("spawned sidecar supervisor child");
         *child_guard = Some(child);
         Ok(())
     }
 
     async fn endpoint_healthy(&self) -> bool {
-        if self.config.endpoint.starts_with("http://") || self.config.endpoint.starts_with("https://")
+        if self.config.endpoint.starts_with("http://")
+            || self.config.endpoint.starts_with("https://")
         {
             return reqwest::get(&self.config.endpoint)
                 .await

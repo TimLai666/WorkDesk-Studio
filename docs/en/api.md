@@ -66,10 +66,17 @@ Failure:
 - `GET /workflows`
 - `POST /workflows`
 - `GET /workflows/{id}`
+- `PATCH /workflows/{id}`
 - `PATCH /workflows/{id}/status`
 - `POST /workflows/{id}/run`
 - `POST /workflows/{id}/proposals`
 - `POST /workflows/{id}/proposals/{proposal_id}/approve`
+
+`POST /workflows/{id}/proposals/{proposal_id}/approve` now enforces proposal apply semantics:
+
+- proposal `diff` must be a JSON workflow patch payload
+- approval applies the patch and creates a new workflow version
+- proposal state is persisted as `applied` only after patch success
 
 Workflow definitions now persist:
 
@@ -89,6 +96,13 @@ Workflow definitions now persist:
 - `POST /agent/sessions/{session_id}/choice-prompts`
 - `POST /agent/sessions/{session_id}/choice-prompts/{prompt_id}/answer`
 
+Capability resolution order:
+
+1. query sidecar IPC `get_capabilities`
+2. fallback to local models cache
+
+Fallback only infers `model` and `model_reasoning_effort`. It never infers `speed`.
+
 Native workbench config fields map directly to Codex-native names:
 
 - `model`
@@ -107,6 +121,12 @@ Native workbench config fields map directly to Codex-native names:
 - `GET /runs/{run_id}/skills`
 - `POST /runs/{run_id}/cancel`
 - `POST /runs/{run_id}/retry`
+
+Run node execution evidence now includes retry scheduling events when node retry policy is configured in node `config`:
+
+- `node_started` includes `attempt`
+- `node_retry_scheduled` includes `attempt`, `next_attempt`, and `backoff_ms`
+- `node_succeeded` / `node_failed` include `attempt`
 
 ### Skills
 

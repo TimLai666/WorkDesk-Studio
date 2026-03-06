@@ -37,9 +37,16 @@ $env:WORKDESK_DB_PATH="C:\custom\workdesk.db"
 $env:WORKDESK_SIDECAR_PATH="$env:LOCALAPPDATA\\WorkDeskStudio\\sidecar\\node\\node.exe"
 $env:WORKDESK_SIDECAR_SCRIPT="$env:LOCALAPPDATA\\WorkDeskStudio\\sidecar\\sidecar.js"
 $env:WORKDESK_ONLYOFFICE_BIN="$env:LOCALAPPDATA\\WorkDeskStudio\\onlyoffice\\documentserver\\documentserver.exe"
+$env:WORKDESK_ONLYOFFICE_BUNDLE_DIR="$env:LOCALAPPDATA\\WorkDeskStudio\\onlyoffice\\bundle"
+$env:WORKDESK_ONLYOFFICE_EMBED_TEMPLATE="http://{host}:{port}/?filePath={path}&callbackUrl={callback_url}"
 $env:WORKDESK_APP_UPDATE_CHANNEL="stable"
 $env:WORKDESK_TOOLCHAIN_UPDATE_CHANNEL="stable"
 ```
+
+Office integration notes:
+
+- DOCX/XLSX/PPTX now use in-window embedded webview flow from the Office panel.
+- If `WORKDESK_ONLYOFFICE_BIN` is missing and `WORKDESK_ONLYOFFICE_BUNDLE_DIR` exists, runtime files are copied on first launch.
 
 ## Start Desktop in Remote Mode
 

@@ -14,7 +14,11 @@ fn signed_manifest(channel: &str, package: &[u8]) -> (AppUpdateManifest, String)
         package_sha256: format!("{:x}", Sha256::digest(package)),
         signature: String::new(),
     };
-    let signature = STANDARD.encode(signing_key.sign(unsigned.signing_payload().as_bytes()).to_bytes());
+    let signature = STANDARD.encode(
+        signing_key
+            .sign(unsigned.signing_payload().as_bytes())
+            .to_bytes(),
+    );
     let manifest = AppUpdateManifest {
         signature,
         ..unsigned

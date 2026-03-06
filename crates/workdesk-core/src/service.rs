@@ -1,13 +1,14 @@
 use crate::errors::CoreError;
 use crate::repository::CoreRepository;
 use crate::types::{
-    AgentWorkspaceMessage, AgentWorkspaceMessageRole, AgentWorkspaceSession, ApprovalState,
-    AppendAgentWorkspaceMessageInput, AuthLoginInput, AuthSessionResponse, AuthSwitchInput,
-    ChoicePrompt, ChoicePromptAnswerInput, ChoicePromptOption, CreateAgentWorkspaceSessionInput,
-    CreateChoicePromptInput, CreateProposalInput, CreateWorkflowInput, MemoryRecord,
-    RunSkillSnapshot, SkillRecord, UpdateAgentWorkspaceSessionConfigInput, UpsertMemoryInput,
-    UpsertSkillInput, WorkflowChangeProposal, WorkflowDefinition, WorkflowNode, WorkflowRun,
-    WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
+    AgentWorkspaceMessage, AgentWorkspaceMessageRole, AgentWorkspaceSession,
+    AppendAgentWorkspaceMessageInput, ApprovalState, AuthLoginInput, AuthSessionResponse,
+    AuthSwitchInput, ChoicePrompt, ChoicePromptAnswerInput, ChoicePromptOption,
+    CreateAgentWorkspaceSessionInput, CreateChoicePromptInput, CreateProposalInput,
+    CreateWorkflowInput, MemoryRecord, PatchWorkflowInput, RunSkillSnapshot, SkillRecord,
+    UpdateAgentWorkspaceSessionConfigInput, UpsertMemoryInput, UpsertSkillInput,
+    WorkflowChangeProposal, WorkflowDefinition, WorkflowNode, WorkflowRun, WorkflowRunEvent,
+    WorkflowRunNodeState, WorkflowStatus,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -147,6 +148,53 @@ impl CoreService {
             .ok_or(CoreError::WorkflowNotFound)
     }
 
+    pub async fn update_workflow_definition(
+        &self,
+        workflow_id: &str,
+        input: PatchWorkflowInput,
+    ) -> std::result::Result<WorkflowDefinition, CoreError> {
+        let mut workflow = self
+            .repo
+            .get_workflow(workflow_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or(CoreError::WorkflowNotFound)?;
+
+        if let Some(name) = input.name {
+            workflow.name = name;
+        }
+        if let Some(timezone) = input.timezone {
+            workflow.timezone = timezone;
+        }
+        if let Some(agent_defaults) = input.agent_defaults {
+            workflow.agent_defaults = Some(agent_defaults);
+        }
+        if let Some(nodes) = input.nodes {
+            workflow.nodes = nodes
+                .into_iter()
+                .map(|node| WorkflowNode {
+                    id: node.id,
+                    kind: node.kind,
+                    x: node.x,
+                    y: node.y,
+                    config: node.config,
+                })
+                .collect();
+        }
+        if let Some(edges) = input.edges {
+            workflow.edges = edges;
+        }
+        workflow
+            .validate()
+            .map_err(|e| CoreError::Validation(e.to_string()))?;
+
+        self.repo
+            .update_workflow_definition(&workflow)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or(CoreError::WorkflowNotFound)
+    }
+
     pub async fn propose_workflow_change(
         &self,
         workflow_id: String,
@@ -185,6 +233,12 @@ impl CoreService {
         proposal
             .approve(approved_by)
             .map_err(|e| CoreError::Validation(e.to_string()))?;
+
+        let patch: PatchWorkflowInput = serde_json::from_str(&proposal.diff).map_err(|e| {
+            CoreError::Validation(format!("proposal diff must be valid JSON patch: {e}"))
+        })?;
+        self.update_workflow_definition(&proposal.workflow_id, patch)
+            .await?;
         proposal.approval_state = ApprovalState::Applied;
         self.repo
             .update_proposal(&proposal)
@@ -528,6 +582,8 @@ impl CoreService {
         run_id: &str,
         requested_by: Option<&str>,
     ) -> std::result::Result<WorkflowRun, CoreError> {
+        let source = self.get_run(run_id).await?;
+        let workflow = self.get_workflow(&source.workflow_id).await?;
         let run = self
             .repo
             .retry_run(run_id, requested_by)
@@ -536,6 +592,10 @@ impl CoreService {
             .ok_or(CoreError::RunNotFound)?;
         self.repo
             .create_run_skill_snapshots(&run.run_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.repo
+            .create_run_node_states(&run.run_id, &workflow.nodes)
             .await
             .map_err(|e| CoreError::Internal(e.to_string()))?;
         self.repo

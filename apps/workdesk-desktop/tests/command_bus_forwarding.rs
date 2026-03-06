@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use workdesk_core::{
-    AgentWorkspaceMessage, AgentWorkspaceSession, ChoicePrompt, CodexModelCapability,
-    CodexNativeSessionConfig, FsDiffResponse, FsReadResponse, FsSearchMatch, FsTreeEntry,
-    OfficeVersionResponse, PdfOperationResponse, RunNodeStatus, RunSkillSnapshot, RunStatus,
-    Scope, TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowRun,
-    WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
+    AgentWorkspaceMessage, AgentWorkspaceSession, AppendAgentWorkspaceMessageInput, AuthLoginInput,
+    AuthLogoutInput, AuthSessionResponse, AuthSwitchInput, ChoicePrompt, CodexModelCapability,
+    CodexNativeSessionConfig, CreateAgentWorkspaceSessionInput, FsDiffResponse, FsReadResponse,
+    FsSearchMatch, FsTreeEntry, OfficeVersionResponse, PatchWorkflowInput, PdfOperationResponse,
+    RunNodeStatus, RunSkillSnapshot, RunStatus, Scope, TerminalSessionResponse, TerminalStartInput,
+    WorkflowDefinition, WorkflowRun, WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
 };
 use workdesk_desktop::command::DesktopCommand;
 use workdesk_desktop::command_bus::{CommandBusClient, CommandBusServer};
@@ -84,6 +85,24 @@ impl FakeDesktopApi {
 
 #[async_trait]
 impl DesktopApi for FakeDesktopApi {
+    async fn login(&self, input: &AuthLoginInput) -> Result<AuthSessionResponse> {
+        Ok(AuthSessionResponse {
+            session_token: "token-1".into(),
+            account_id: input.account_id.clone(),
+        })
+    }
+
+    async fn logout(&self, _input: &AuthLogoutInput) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn switch_account(&self, input: &AuthSwitchInput) -> Result<AuthSessionResponse> {
+        Ok(AuthSessionResponse {
+            session_token: "token-2".into(),
+            account_id: input.to_account.clone(),
+        })
+    }
+
     async fn list_workflows(&self) -> Result<Vec<WorkflowDefinition>> {
         Ok(Vec::new())
     }
@@ -102,6 +121,29 @@ impl DesktopApi for FakeDesktopApi {
             version: 1,
             status,
             agent_defaults: None,
+        })
+    }
+
+    async fn patch_workflow(
+        &self,
+        workflow_id: &str,
+        patch: &PatchWorkflowInput,
+    ) -> Result<WorkflowDefinition> {
+        Ok(WorkflowDefinition {
+            id: workflow_id.to_string(),
+            name: patch
+                .name
+                .clone()
+                .unwrap_or_else(|| workflow_id.to_string()),
+            timezone: patch
+                .timezone
+                .clone()
+                .unwrap_or_else(|| "Asia/Taipei".into()),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            version: 2,
+            status: WorkflowStatus::Draft,
+            agent_defaults: patch.agent_defaults.clone(),
         })
     }
 
@@ -254,11 +296,7 @@ impl DesktopApi for FakeDesktopApi {
         self.fs_read(path).await
     }
 
-    async fn office_save(
-        &self,
-        _path: &str,
-        _content_base64: String,
-    ) -> Result<serde_json::Value> {
+    async fn office_save(&self, _path: &str, _content_base64: String) -> Result<serde_json::Value> {
         Ok(serde_json::json!({"ok": true}))
     }
 
@@ -310,6 +348,20 @@ impl DesktopApi for FakeDesktopApi {
         Ok(Vec::new())
     }
 
+    async fn create_agent_workspace_session(
+        &self,
+        input: &CreateAgentWorkspaceSessionInput,
+    ) -> Result<AgentWorkspaceSession> {
+        Ok(AgentWorkspaceSession {
+            session_id: "session-1".into(),
+            title: input.title.clone(),
+            config: input.config.clone().unwrap_or_default(),
+            last_active_panel: input.last_active_panel.clone(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        })
+    }
+
     async fn update_agent_workspace_session_config(
         &self,
         _session_id: &str,
@@ -335,6 +387,20 @@ impl DesktopApi for FakeDesktopApi {
 
     async fn list_choice_prompts(&self, _session_id: &str) -> Result<Vec<ChoicePrompt>> {
         Ok(Vec::new())
+    }
+
+    async fn append_agent_workspace_message(
+        &self,
+        _session_id: &str,
+        input: &AppendAgentWorkspaceMessageInput,
+    ) -> Result<AgentWorkspaceMessage> {
+        Ok(AgentWorkspaceMessage {
+            message_id: "msg-1".into(),
+            session_id: "session-1".into(),
+            role: input.role.clone(),
+            content: input.content.clone(),
+            created_at: Utc::now(),
+        })
     }
 
     async fn answer_choice_prompt(

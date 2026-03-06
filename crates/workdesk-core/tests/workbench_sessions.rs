@@ -3,10 +3,10 @@ use std::sync::Arc;
 use serde_json::json;
 use tempfile::TempDir;
 use workdesk_core::{
-    AgentWorkspaceMessageRole, ChoicePromptAnswerInput, ChoicePromptOptionInput,
-    CreateAgentWorkspaceSessionInput, CreateChoicePromptInput, CreateWorkflowInput,
-    CoreRepository, CoreService, SqliteCoreRepository, UpdateAgentWorkspaceSessionConfigInput,
-    WorkflowAgentDefaults, WorkflowNodeInput, WorkflowNodeKind,
+    AgentWorkspaceMessageRole, ChoicePromptAnswerInput, ChoicePromptOptionInput, CoreRepository,
+    CoreService, CreateAgentWorkspaceSessionInput, CreateChoicePromptInput, CreateWorkflowInput,
+    SqliteCoreRepository, UpdateAgentWorkspaceSessionConfigInput, WorkflowAgentDefaults,
+    WorkflowNodeInput, WorkflowNodeKind,
 };
 
 async fn setup_service(
@@ -172,7 +172,10 @@ async fn workflow_persists_canvas_coordinates_and_agent_defaults_without_speed()
     assert_eq!(loaded.nodes[0].x, Some(320.0));
     assert_eq!(loaded.nodes[0].y, Some(180.0));
     assert_eq!(
-        loaded.nodes[0].config.as_ref().and_then(|cfg| cfg.get("language")),
+        loaded.nodes[0]
+            .config
+            .as_ref()
+            .and_then(|cfg| cfg.get("language")),
         Some(&json!("en"))
     );
 }

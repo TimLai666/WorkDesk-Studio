@@ -10,6 +10,8 @@
   - HTTP API for auth, workflows, proposals, runs, skills, memory, filesystem, office, updater metadata, and the native workbench session surface.
 - `crates/workdesk-runner`
   - Workflow runner daemon that claims queued runs, materializes run skill snapshots, executes DAG nodes, and records run/node state.
+  - Applies node-level retry/backoff policy from `workflow_nodes.config_json`.
+  - Applies `CodeNodeSpec` execution fields (`language`, `entry`, `deps`, `timeout_sec`, `resource_limits`) during `CodeExec`.
 
 ## Desktop Product Layer
 
@@ -25,6 +27,7 @@
   - Left side shows sessions and capability context.
   - Center shows composer-style controls and session messages.
   - Right side keeps run, file, and office context panels available from the same shell.
+  - Canvas panel supports visual drag-drop node positioning, keyboard move shortcuts, align/distribute actions, and persisted coordinates.
 
 ## Local Runtime Supervisors
 
@@ -32,8 +35,10 @@
   - Watches bundled `node.exe + sidecar.js`.
   - Emits `SIDECAR_UNAVAILABLE` when runtime files are missing or health checks fail.
 - OnlyOffice launcher
+  - On first run, can copy bundled Document Server runtime into app-scoped runtime via `WORKDESK_ONLYOFFICE_BUNDLE_DIR`.
   - Watches the configured Document Server binary and health endpoint.
   - Emits `DOCSERVER_UNAVAILABLE` when runtime files are missing or health checks fail.
+  - Office panel uses embedded WebView for DOCX/XLSX/PPTX editing URL flow.
 
 ## Persistence and Domain State
 

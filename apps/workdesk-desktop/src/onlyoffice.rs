@@ -11,6 +11,7 @@ use workdesk_core::AppConfig;
 #[derive(Debug, Clone)]
 pub struct OnlyOfficeLauncherConfig {
     pub binary_path: PathBuf,
+    pub bundle_dir: Option<PathBuf>,
     pub host: String,
     pub port: u16,
     pub health_path: String,
@@ -21,6 +22,9 @@ impl OnlyOfficeLauncherConfig {
     pub fn from_app_config(config: &AppConfig) -> Self {
         Self {
             binary_path: config.onlyoffice_binary_path.clone(),
+            bundle_dir: std::env::var("WORKDESK_ONLYOFFICE_BUNDLE_DIR")
+                .ok()
+                .map(PathBuf::from),
             host: config.onlyoffice_host.clone(),
             port: config.onlyoffice_port,
             health_path: std::env::var("WORKDESK_ONLYOFFICE_HEALTH_PATH")
@@ -104,6 +108,7 @@ impl OnlyOfficeLauncher {
     }
 
     async fn ensure_process(&self) -> Result<()> {
+        self.ensure_runtime_from_bundle().await?;
         if !self.config.binary_path.exists() {
             return Ok(());
         }
@@ -142,6 +147,25 @@ impl OnlyOfficeLauncher {
         Ok(())
     }
 
+    async fn ensure_runtime_from_bundle(&self) -> Result<()> {
+        if self.config.binary_path.exists() {
+            return Ok(());
+        }
+        let Some(bundle_dir) = self.config.bundle_dir.as_ref() else {
+            return Ok(());
+        };
+        if !bundle_dir.exists() {
+            return Ok(());
+        }
+        let runtime_dir = self
+            .config
+            .binary_path
+            .parent()
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow::anyhow!("onlyoffice binary path has no parent directory"))?;
+        copy_path_recursive(bundle_dir.clone(), runtime_dir).await
+    }
+
     async fn health_check(&self) -> bool {
         reqwest::get(self.config.health_url())
             .await
@@ -150,11 +174,40 @@ impl OnlyOfficeLauncher {
     }
 }
 
+async fn copy_path_recursive(source: PathBuf, target: PathBuf) -> Result<()> {
+    tokio::task::spawn_blocking(move || copy_path_recursive_sync(&source, &target))
+        .await
+        .context("join copy onlyoffice bundle task")??;
+    Ok(())
+}
+
+fn copy_path_recursive_sync(source: &PathBuf, target: &PathBuf) -> Result<()> {
+    let metadata = std::fs::metadata(source)
+        .with_context(|| format!("onlyoffice bundle path not found: {}", source.display()))?;
+    if metadata.is_file() {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(source, target)?;
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let path = entry.path();
+        let nested_target = target.join(entry.file_name());
+        copy_path_recursive_sync(&path, &nested_target)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{OnlyOfficeLauncher, OnlyOfficeLauncherConfig};
     use std::path::PathBuf;
     use std::time::Duration;
+    use tempfile::TempDir;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
 
@@ -162,6 +215,7 @@ mod tests {
     async fn probe_reports_missing_runtime() {
         let launcher = OnlyOfficeLauncher::new(OnlyOfficeLauncherConfig {
             binary_path: PathBuf::from("missing-docserver.exe"),
+            bundle_dir: None,
             host: "127.0.0.1".into(),
             port: 49981,
             health_path: "/health".into(),
@@ -196,6 +250,7 @@ mod tests {
 
         let launcher = OnlyOfficeLauncher::new(OnlyOfficeLauncherConfig {
             binary_path: PathBuf::from("missing-docserver.exe"),
+            bundle_dir: None,
             host: "127.0.0.1".into(),
             port,
             health_path: "/health".into(),
@@ -206,5 +261,33 @@ mod tests {
         assert!(probe.healthy);
         assert!(probe.diagnostic.is_none());
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn runtime_bundle_is_copied_when_binary_missing() {
+        let tmp = TempDir::new().expect("tempdir");
+        let bundle_dir = tmp.path().join("bundle");
+        let runtime_dir = tmp.path().join("runtime");
+        tokio::fs::create_dir_all(&bundle_dir)
+            .await
+            .expect("create bundle dir");
+        tokio::fs::write(bundle_dir.join("documentserver.exe"), "stub")
+            .await
+            .expect("write bundle binary");
+
+        let launcher = OnlyOfficeLauncher::new(OnlyOfficeLauncherConfig {
+            binary_path: runtime_dir.join("documentserver.exe"),
+            bundle_dir: Some(bundle_dir),
+            host: "127.0.0.1".into(),
+            port: 49001,
+            health_path: "/health".into(),
+            probe_interval: Duration::from_millis(25),
+        });
+
+        launcher
+            .ensure_runtime_from_bundle()
+            .await
+            .expect("copy runtime from bundle");
+        assert!(runtime_dir.join("documentserver.exe").exists());
     }
 }

@@ -9,10 +9,10 @@ use crate::types::{
     CreateProposalInput, CreateWorkflowInput, FsDiffInput, FsDiffLine, FsDiffResponse, FsMoveInput,
     FsQuery, FsReadResponse, FsSearchMatch, FsSearchQuery, FsTreeEntry, FsWriteInput,
     OfficeOpenInput, OfficeSaveInput, OfficeVersionResponse, OnlyOfficeCallbackInput,
-    PdfAnnotateInput, PdfOperationResponse, PdfPreviewInput, PdfReplaceTextInput, PdfSaveVersionInput,
-    RetryRunInput, RunEventsQuery, RunListQuery, RunWorkflowInput, TerminalSessionResponse,
-    TerminalStartInput,
-    UpdateWorkflowStatusInput, UpsertMemoryInput, UpsertSkillInput,
+    PatchWorkflowInput, PdfAnnotateInput, PdfOperationResponse, PdfPreviewInput,
+    PdfReplaceTextInput, PdfSaveVersionInput, RetryRunInput, RunEventsQuery, RunListQuery,
+    RunWorkflowInput, TerminalSessionResponse, TerminalStartInput, UpdateWorkflowStatusInput,
+    UpsertMemoryInput, UpsertSkillInput,
 };
 use anyhow::{Context, Result};
 use axum::extract::{Path, Query, State};
@@ -51,7 +51,10 @@ pub fn build_router(service: CoreService) -> Router {
             "/api/v1/workflows",
             get(list_workflows).post(create_workflow),
         )
-        .route("/api/v1/workflows/{id}", get(get_workflow))
+        .route(
+            "/api/v1/workflows/{id}",
+            get(get_workflow).patch(patch_workflow),
+        )
         .route(
             "/api/v1/workflows/{id}/status",
             patch(update_workflow_status),
@@ -102,12 +105,18 @@ pub fn build_router(service: CoreService) -> Router {
         .route("/api/v1/fs/move", post(fs_move))
         .route("/api/v1/fs/diff", post(fs_diff))
         .route("/api/v1/fs/terminal/start", post(fs_terminal_start))
-        .route("/api/v1/fs/terminal/session/{session_id}", get(fs_terminal_session))
+        .route(
+            "/api/v1/fs/terminal/session/{session_id}",
+            get(fs_terminal_session),
+        )
         .route("/api/v1/fs/path", delete(fs_delete))
         .route("/api/v1/office/open", post(office_open))
         .route("/api/v1/office/save", post(office_save))
         .route("/api/v1/office/version", get(office_versions))
-        .route("/api/v1/office/onlyoffice/callback", post(onlyoffice_callback))
+        .route(
+            "/api/v1/office/onlyoffice/callback",
+            post(onlyoffice_callback),
+        )
         .route("/api/v1/office/pdf/preview", post(pdf_preview))
         .route("/api/v1/office/pdf/annotate", post(pdf_annotate))
         .route("/api/v1/office/pdf/replace", post(pdf_replace_text))
@@ -211,6 +220,19 @@ async fn get_workflow(
     let workflow = state
         .service
         .get_workflow(&workflow_id)
+        .await
+        .map_err(ApiHttpError::from)?;
+    Ok(ok(workflow))
+}
+
+async fn patch_workflow(
+    Path(workflow_id): Path<String>,
+    State(state): State<ApiState>,
+    Json(input): Json<PatchWorkflowInput>,
+) -> Result<Json<ApiEnvelope<crate::types::WorkflowDefinition>>, ApiHttpError> {
+    let workflow = state
+        .service
+        .update_workflow_definition(&workflow_id, input)
         .await
         .map_err(ApiHttpError::from)?;
     Ok(ok(workflow))
@@ -506,10 +528,9 @@ async fn fs_terminal_session(
     State(state): State<ApiState>,
 ) -> Result<Json<ApiEnvelope<TerminalSessionResponse>>, ApiHttpError> {
     let sessions = state.terminal_sessions.read().await;
-    let session = sessions
-        .get(&session_id)
-        .cloned()
-        .ok_or_else(|| ApiHttpError::from(CoreError::BadRequest("terminal session not found".into())))?;
+    let session = sessions.get(&session_id).cloned().ok_or_else(|| {
+        ApiHttpError::from(CoreError::BadRequest("terminal session not found".into()))
+    })?;
     Ok(ok(session))
 }
 

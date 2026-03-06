@@ -2,8 +2,8 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use workdesk_runner::{
-    ExecutionLanguage, ManagedToolchainRecord, ToolchainBinary, ToolchainManager, ToolchainManifest,
-    ToolchainReleaseChannel, ToolchainReleaseFeed,
+    ExecutionLanguage, ManagedToolchainRecord, ToolchainBinary, ToolchainManager,
+    ToolchainManifest, ToolchainReleaseChannel, ToolchainReleaseFeed,
 };
 
 #[test]
@@ -119,9 +119,12 @@ async fn installs_release_from_file_feed_and_updates_manifest() {
         }],
     };
     let feed_path = tmp.path().join("feed.json");
-    tokio::fs::write(&feed_path, serde_json::to_vec_pretty(&feed).expect("feed json"))
-        .await
-        .expect("write feed");
+    tokio::fs::write(
+        &feed_path,
+        serde_json::to_vec_pretty(&feed).expect("feed json"),
+    )
+    .await
+    .expect("write feed");
 
     let record = manager
         .install_from_release_feed(
@@ -136,7 +139,9 @@ async fn installs_release_from_file_feed_and_updates_manifest() {
     assert_eq!(record.version, "0.6.9");
 
     let binary_path = manager.binary_path(ToolchainBinary::Uv);
-    let installed = tokio::fs::read(&binary_path).await.expect("installed binary");
+    let installed = tokio::fs::read(&binary_path)
+        .await
+        .expect("installed binary");
     assert_eq!(installed, asset_bytes);
 
     let manifest = manager
@@ -178,9 +183,12 @@ async fn checksum_mismatch_rolls_back_staged_binary() {
         }],
     };
     let feed_path = tmp.path().join("feed.json");
-    tokio::fs::write(&feed_path, serde_json::to_vec_pretty(&feed).expect("feed json"))
-        .await
-        .expect("write feed");
+    tokio::fs::write(
+        &feed_path,
+        serde_json::to_vec_pretty(&feed).expect("feed json"),
+    )
+    .await
+    .expect("write feed");
 
     let error = manager
         .install_from_release_feed(

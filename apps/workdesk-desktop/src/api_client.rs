@@ -4,12 +4,13 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 use workdesk_core::{
-    AgentWorkspaceMessage, AgentWorkspaceSession, AppendAgentWorkspaceMessageInput,
-    AuthLoginInput, AuthSessionResponse, CancelRunInput, ChoicePrompt,
-    ChoicePromptAnswerInput, CodexModelCapability, CodexNativeSessionConfig, RetryRunInput,
-    RunSkillSnapshot, RunWorkflowInput, TerminalSessionResponse, TerminalStartInput,
-    UpdateAgentWorkspaceSessionConfigInput, WorkflowDefinition, WorkflowRun, WorkflowRunEvent,
-    WorkflowRunNodeState, WorkflowStatus, UpdateWorkflowStatusInput,
+    AgentWorkspaceMessage, AgentWorkspaceSession, AppendAgentWorkspaceMessageInput, AuthLoginInput,
+    AuthLogoutInput, AuthSessionResponse, AuthSwitchInput, CancelRunInput, ChoicePrompt,
+    ChoicePromptAnswerInput, CodexModelCapability, CodexNativeSessionConfig,
+    CreateAgentWorkspaceSessionInput, PatchWorkflowInput, RetryRunInput, RunSkillSnapshot,
+    RunWorkflowInput, TerminalSessionResponse, TerminalStartInput,
+    UpdateAgentWorkspaceSessionConfigInput, UpdateWorkflowStatusInput, WorkflowDefinition,
+    WorkflowRun, WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
 };
 
 #[derive(Debug, Clone)]
@@ -80,6 +81,22 @@ impl ApiClient {
         parse_envelope(response).await
     }
 
+    pub async fn patch_workflow(
+        &self,
+        workflow_id: &str,
+        patch: &PatchWorkflowInput,
+    ) -> Result<WorkflowDefinition> {
+        let url = self.endpoint(&format!("/api/v1/workflows/{workflow_id}"))?;
+        let response = self
+            .http
+            .patch(url)
+            .json(patch)
+            .send()
+            .await
+            .with_context(|| format!("patch workflow definition for {workflow_id}"))?;
+        parse_envelope(response).await
+    }
+
     pub async fn login(&self, input: &AuthLoginInput) -> Result<AuthSessionResponse> {
         let url = self.endpoint("/api/v1/auth/login")?;
         let response = self
@@ -89,6 +106,30 @@ impl ApiClient {
             .send()
             .await
             .context("request auth login")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn logout(&self, input: &AuthLogoutInput) -> Result<Value> {
+        let url = self.endpoint("/api/v1/auth/logout")?;
+        let response = self
+            .http
+            .post(url)
+            .json(input)
+            .send()
+            .await
+            .context("request auth logout")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn switch_account(&self, input: &AuthSwitchInput) -> Result<AuthSessionResponse> {
+        let url = self.endpoint("/api/v1/auth/switch")?;
+        let response = self
+            .http
+            .post(url)
+            .json(input)
+            .send()
+            .await
+            .context("request auth switch")?;
         parse_envelope(response).await
     }
 
@@ -211,6 +252,21 @@ impl ApiClient {
         parse_envelope(response).await
     }
 
+    pub async fn create_agent_workspace_session(
+        &self,
+        input: &CreateAgentWorkspaceSessionInput,
+    ) -> Result<AgentWorkspaceSession> {
+        let url = self.endpoint("/api/v1/agent/sessions")?;
+        let response = self
+            .http
+            .post(url)
+            .json(input)
+            .send()
+            .await
+            .context("create agent session")?;
+        parse_envelope(response).await
+    }
+
     pub async fn update_agent_workspace_session_config(
         &self,
         session_id: &str,
@@ -326,12 +382,7 @@ impl ApiClient {
             "/api/v1/fs/tree?path={}",
             urlencoding::encode(path)
         ))?;
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .context("request fs tree")?;
+        let response = self.http.get(url).send().await.context("request fs tree")?;
         parse_envelope(response).await
     }
 
@@ -340,12 +391,7 @@ impl ApiClient {
             "/api/v1/fs/file?path={}",
             urlencoding::encode(path)
         ))?;
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .context("request fs read")?;
+        let response = self.http.get(url).send().await.context("request fs read")?;
         parse_envelope(response).await
     }
 
@@ -393,7 +439,11 @@ impl ApiClient {
         parse_envelope(response).await
     }
 
-    pub async fn fs_diff(&self, left_path: &str, right_path: &str) -> Result<workdesk_core::FsDiffResponse> {
+    pub async fn fs_diff(
+        &self,
+        left_path: &str,
+        right_path: &str,
+    ) -> Result<workdesk_core::FsDiffResponse> {
         let url = self.endpoint("/api/v1/fs/diff")?;
         let response = self
             .http
@@ -408,7 +458,10 @@ impl ApiClient {
         parse_envelope(response).await
     }
 
-    pub async fn terminal_start(&self, input: &TerminalStartInput) -> Result<TerminalSessionResponse> {
+    pub async fn terminal_start(
+        &self,
+        input: &TerminalStartInput,
+    ) -> Result<TerminalSessionResponse> {
         let url = self.endpoint("/api/v1/fs/terminal/start")?;
         let response = self
             .http
@@ -460,7 +513,10 @@ impl ApiClient {
         parse_envelope(response).await
     }
 
-    pub async fn office_versions(&self, path: &str) -> Result<workdesk_core::OfficeVersionResponse> {
+    pub async fn office_versions(
+        &self,
+        path: &str,
+    ) -> Result<workdesk_core::OfficeVersionResponse> {
         let url = self.endpoint(&format!(
             "/api/v1/office/version?path={}",
             urlencoding::encode(path)
@@ -528,7 +584,10 @@ impl ApiClient {
         parse_envelope(response).await
     }
 
-    pub async fn pdf_save_version(&self, path: &str) -> Result<workdesk_core::PdfOperationResponse> {
+    pub async fn pdf_save_version(
+        &self,
+        path: &str,
+    ) -> Result<workdesk_core::PdfOperationResponse> {
         let url = self.endpoint("/api/v1/office/pdf/save-version")?;
         let response = self
             .http

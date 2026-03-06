@@ -154,6 +154,102 @@ async fn workflow_run_endpoint_enqueues_run_with_envelope() {
 }
 
 #[tokio::test]
+async fn workflow_patch_endpoint_updates_definition_with_envelope() {
+    let app = setup_router().await;
+
+    let create_workflow = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workflows")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                      "name":"canvas",
+                      "timezone":"Asia/Taipei",
+                      "nodes":[{"id":"n1","kind":"schedule_trigger"}],
+                      "edges":[]
+                    }"#,
+                ))
+                .expect("create workflow request"),
+        )
+        .await
+        .expect("create workflow response");
+    assert_eq!(create_workflow.status(), 200);
+
+    let workflow_body = to_bytes(create_workflow.into_body(), usize::MAX)
+        .await
+        .expect("workflow body");
+    let workflow_payload: Value = serde_json::from_slice(&workflow_body).expect("workflow json");
+    let workflow_id = workflow_payload["data"]["id"]
+        .as_str()
+        .expect("workflow id")
+        .to_string();
+
+    let patch_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/workflows/{workflow_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                      "name":"canvas-v2",
+                      "agent_defaults":{
+                        "model":"gpt-5.4",
+                        "model_reasoning_effort":"high"
+                      },
+                      "nodes":[
+                        {
+                          "id":"n1",
+                          "kind":"schedule_trigger",
+                          "x":320.5,
+                          "y":140.25,
+                          "config":{"cron":"0 * * * *"}
+                        }
+                      ],
+                      "edges":[]
+                    }"#,
+                ))
+                .expect("patch request"),
+        )
+        .await
+        .expect("patch response");
+    assert_eq!(patch_response.status(), 200);
+    let patch_body = to_bytes(patch_response.into_body(), usize::MAX)
+        .await
+        .expect("patch body");
+    let patch_payload: Value = serde_json::from_slice(&patch_body).expect("patch json");
+    assert!(patch_payload["error"].is_null());
+    assert_eq!(patch_payload["data"]["name"], "canvas-v2");
+    assert_eq!(patch_payload["data"]["version"], 2);
+    assert_eq!(patch_payload["data"]["nodes"][0]["x"], 320.5);
+    assert_eq!(
+        patch_payload["data"]["agent_defaults"]["model_reasoning_effort"],
+        "high"
+    );
+
+    let get_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/workflows/{workflow_id}"))
+                .body(Body::empty())
+                .expect("get request"),
+        )
+        .await
+        .expect("get response");
+    assert_eq!(get_response.status(), 200);
+    let get_body = to_bytes(get_response.into_body(), usize::MAX)
+        .await
+        .expect("get body");
+    let get_payload: Value = serde_json::from_slice(&get_body).expect("get json");
+    assert_eq!(get_payload["data"]["name"], "canvas-v2");
+    assert_eq!(get_payload["data"]["nodes"][0]["y"], 140.25);
+}
+
+#[tokio::test]
 async fn onlyoffice_callback_uses_envelope() {
     let app = setup_router().await;
     let response = app

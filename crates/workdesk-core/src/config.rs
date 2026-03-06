@@ -47,8 +47,8 @@ impl AppConfig {
             .unwrap_or(Self::default_toolchain_manifest_path()?);
         let app_update_channel =
             env::var("WORKDESK_APP_UPDATE_CHANNEL").unwrap_or_else(|_| "stable".to_string());
-        let toolchain_update_channel = env::var("WORKDESK_TOOLCHAIN_UPDATE_CHANNEL")
-            .unwrap_or_else(|_| "stable".to_string());
+        let toolchain_update_channel =
+            env::var("WORKDESK_TOOLCHAIN_UPDATE_CHANNEL").unwrap_or_else(|_| "stable".to_string());
 
         Ok(Self {
             db_path,
