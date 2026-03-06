@@ -14,7 +14,7 @@ WorkDesk Studio is a Rust-first agent workbench for daily automation:
 - `apps/workdesk-desktop`: desktop entry binary (local/remote mode bootstrap, i18n loader)
 - `crates/workdesk-domain`: public interfaces and core types
 - `crates/workdesk-runner`: toolchain manager + code node execution layer + Codex CLI adapter
-- `crates/workdesk-core`: HTTP API service, in-memory implementation, workflow/skills/memory/fs/office endpoints
+- `crates/workdesk-core`: HTTP API service with `sqlx + SQLite` persistence, workflow/skills/memory/fs/office endpoints
 - `deploy/docker-compose.phase2.yml`: phase-2 multi-user deployment baseline (Core + PostgreSQL + OnlyOffice)
 - `scripts/windows`: installer/toolchain automation scripts
 
@@ -45,9 +45,9 @@ cargo run -p workdesk-core
 ## Key API Surface (Implemented Scaffold)
 
 - Auth: `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/switch`
-- Workflows: `GET/POST /api/v1/workflows`, `GET /api/v1/workflows/:id`, `PATCH /api/v1/workflows/:id/status`
-- Workflow Runtime: `POST /api/v1/workflows/:id/run`
-- Proposal Flow: `POST /api/v1/workflows/:id/proposals`, `POST /api/v1/workflows/:id/proposals/:proposal_id/approve`
+- Workflows: `GET/POST /api/v1/workflows`, `GET /api/v1/workflows/{id}`, `PATCH /api/v1/workflows/{id}/status`
+- Workflow Runtime: `POST /api/v1/workflows/{id}/run`
+- Proposal Flow: `POST /api/v1/workflows/{id}/proposals`, `POST /api/v1/workflows/{id}/proposals/{proposal_id}/approve`
 - Skills: `GET/POST /api/v1/skills`, `GET /api/v1/skills/export`, `POST /api/v1/skills/import`
 - Memory: `GET/POST /api/v1/memory`, `GET /api/v1/memory/export`, `POST /api/v1/memory/import`
 - Filesystem: `GET /api/v1/fs/tree`, `GET/PUT /api/v1/fs/file`, `POST /api/v1/fs/move`, `DELETE /api/v1/fs/path`
@@ -55,5 +55,10 @@ cargo run -p workdesk-core
 
 ## Current Scope
 
-This commit provides a production-oriented scaffold with executable APIs, domain contracts, and tests.
-Full UI canvas, OnlyOffice embedded editor wiring, and persistent DB backends (SQLite/PostgreSQL) are the next incremental implementation slices.
+This repo now includes a local persistent core baseline (`sqlx + SQLite`), stabilized API envelope responses, and desktop-side envelope decoding for remote mode.
+Full UI canvas and embedded OnlyOffice editor wiring remain next incremental implementation slices.
+
+## Documentation
+
+- English (source): `docs/en/`
+- Traditional Chinese: `docs/zh-TW/`
