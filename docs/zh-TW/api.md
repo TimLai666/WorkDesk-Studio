@@ -4,7 +4,7 @@ Base path: `/api/v1`
 
 ## Envelope
 
-所有回應統一使用 JSON envelope。
+所有 HTTP 回應都使用同一個 envelope 結構。
 
 成功：
 
@@ -36,7 +36,7 @@ Base path: `/api/v1`
 }
 ```
 
-## 錯誤碼（固定）
+## 穩定錯誤碼
 
 - `AUTH_INVALID_CREDENTIALS`
 - `AUTH_ACCOUNT_NOT_FOUND`
@@ -49,7 +49,7 @@ Base path: `/api/v1`
 - `BAD_REQUEST`
 - `INTERNAL_ERROR`
 
-## 端點
+## HTTP 端點
 
 ### Health
 
@@ -67,7 +67,7 @@ Base path: `/api/v1`
 - `POST /workflows`
 - `GET /workflows/{id}`
 - `PATCH /workflows/{id}/status`
-- `POST /workflows/{id}/run`（入列 run + 建立 skills snapshot）
+- `POST /workflows/{id}/run`（enqueue run + 建立 run skill snapshot）
 - `POST /workflows/{id}/proposals`
 - `POST /workflows/{id}/proposals/{proposal_id}/approve`
 
@@ -107,3 +107,39 @@ Base path: `/api/v1`
 - `POST /office/open`
 - `POST /office/save`
 - `GET /office/version?path=<relative-path>`
+
+## Desktop 本機 IPC（Windows 優先）
+
+此段為 desktop 本機行程協調，不是 core HTTP API。
+
+### Command Bus
+
+- Endpoint：`\\.\pipe\WorkDeskStudio.CommandBus`
+- Request：
+
+```json
+{
+  "type": "open_run",
+  "payload": { "run_id": "run-123" },
+  "request_id": "uuid"
+}
+```
+
+- Response：
+
+```json
+{
+  "ok": true,
+  "error": null
+}
+```
+
+### Automation Channel
+
+- Endpoint：`\\.\pipe\WorkDeskStudio.Automation`
+- 支援 request type：
+  - `get_state`
+  - `refresh_runs`
+  - `dispatch_command`
+  - `cancel_selected_run`
+  - `retry_selected_run`

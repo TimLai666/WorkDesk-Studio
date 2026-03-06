@@ -3,7 +3,10 @@ use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
-use workdesk_core::{AuthLoginInput, AuthSessionResponse, WorkflowDefinition};
+use workdesk_core::{
+    AuthLoginInput, AuthSessionResponse, CancelRunInput, RetryRunInput, RunSkillSnapshot,
+    RunWorkflowInput, WorkflowDefinition, WorkflowRun, WorkflowRunEvent,
+};
 
 #[derive(Debug, Clone)]
 pub struct ApiClient {
@@ -66,6 +69,92 @@ impl ApiClient {
             .send()
             .await
             .context("request auth login")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn list_runs(&self, limit: usize) -> Result<Vec<WorkflowRun>> {
+        let url = self.endpoint(&format!("/api/v1/runs?limit={}", limit.clamp(1, 500)))?;
+        let response = self.http.get(url).send().await.context("request runs")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn list_run_events(
+        &self,
+        run_id: &str,
+        after_seq: i64,
+        limit: usize,
+    ) -> Result<Vec<WorkflowRunEvent>> {
+        let url = self.endpoint(&format!(
+            "/api/v1/runs/{run_id}/events?after_seq={after_seq}&limit={}",
+            limit.clamp(1, 2000)
+        ))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("request run events for {run_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn list_run_skills(&self, run_id: &str) -> Result<Vec<RunSkillSnapshot>> {
+        let url = self.endpoint(&format!("/api/v1/runs/{run_id}/skills"))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("request run skills for {run_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn run_workflow(
+        &self,
+        workflow_id: &str,
+        requested_by: Option<&str>,
+    ) -> Result<WorkflowRun> {
+        let url = self.endpoint(&format!("/api/v1/workflows/{workflow_id}/run"))?;
+        let response = self
+            .http
+            .post(url)
+            .json(&RunWorkflowInput {
+                requested_by: requested_by.map(ToString::to_string),
+            })
+            .send()
+            .await
+            .with_context(|| format!("request run workflow {workflow_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn cancel_run(
+        &self,
+        run_id: &str,
+        requested_by: Option<&str>,
+    ) -> Result<WorkflowRun> {
+        let url = self.endpoint(&format!("/api/v1/runs/{run_id}/cancel"))?;
+        let response = self
+            .http
+            .post(url)
+            .json(&CancelRunInput {
+                requested_by: requested_by.map(ToString::to_string),
+            })
+            .send()
+            .await
+            .with_context(|| format!("request cancel run {run_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn retry_run(&self, run_id: &str, requested_by: Option<&str>) -> Result<WorkflowRun> {
+        let url = self.endpoint(&format!("/api/v1/runs/{run_id}/retry"))?;
+        let response = self
+            .http
+            .post(url)
+            .json(&RetryRunInput {
+                requested_by: requested_by.map(ToString::to_string),
+            })
+            .send()
+            .await
+            .with_context(|| format!("request retry run {run_id}"))?;
         parse_envelope(response).await
     }
 

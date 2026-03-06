@@ -2,22 +2,48 @@
 
 ## Runtime Topology
 
-- `apps/workdesk-desktop`: desktop shell. Local mode starts core + runner loops in the same app process; remote mode connects to a server core.
-- `crates/workdesk-core`: HTTP API for auth, workflows, proposals, skills, memory, run queue, filesystem, and office endpoints.
-- `crates/workdesk-runner`: workflow runner daemon. Claims queued runs, materializes skill snapshots, writes run events/status.
+- `apps/workdesk-desktop`
+  - Single binary for GUI + CLI entrypoints.
+  - Local mode starts core + runner loops in the same desktop process.
+  - Remote mode connects to an external core service.
+- `crates/workdesk-core`
+  - HTTP API for auth, workflows, proposals, skills, memory, run queue, filesystem, and office endpoints.
+- `crates/workdesk-runner`
+  - Workflow runner daemon that claims queued runs, materializes skill snapshots, and writes run events/status.
 
-## Persistence Strategy (Current Milestone)
+## Desktop Product Layer (Current Milestone)
+
+- `DesktopAppController`
+  - Central command/state/view coordinator.
+  - Handles CLI/IPC commands, API calls, and run detail synchronization.
+- Single-instance (Windows first)
+  - Mutex: `Global\WorkDeskStudio.Singleton`
+  - Secondary instance forwards command and exits.
+- Local command bus
+  - Named pipe endpoint: `\\.\pipe\WorkDeskStudio.CommandBus`
+  - Request envelope: `{ "type": "...", "payload": { ... }, "request_id": "..." }`
+  - Response envelope: `{ "ok": true|false, "error": { ... } }`
+- GPUI + `gpui-component`
+  - Main view has Run List + Run Detail.
+  - Run Detail includes events and run skill snapshot.
+  - UI actions include refresh, cancel run, and retry run.
+- Automation mode (`--automation`)
+  - Test channel endpoint: `\\.\pipe\WorkDeskStudio.Automation`
+  - Exposes read-only UI state snapshot plus test actions.
+
+## Persistence Strategy
 
 - Local persistence uses `sqlx + SQLite`.
-- Default database path on Windows:
+- Default Windows DB path:
   - `%LOCALAPPDATA%\WorkDeskStudio\data\workdesk.db`
-- Override path:
+- Override:
   - `WORKDESK_DB_PATH`
-- Core startup flow:
-  1. Resolve `AppConfig` from env.
+- Startup flow:
+  1. Resolve `AppConfig`.
   2. Ensure DB parent directory exists.
   3. Open SQLite pool.
-  4. Apply migrations before serving API.
+  4. Apply migrations.
+  5. Start API service.
 
 ## Data Model Scope
 
@@ -29,31 +55,21 @@
 
 Scope boundaries:
 
-- `user` scope: per-account private records.
-- `shared` scope: cross-user shared records.
+- `user`: per-account private records
+- `shared`: cross-user shared records
 
-## Auth Baseline
+## API Envelope Contract
 
-- Passwords are stored as Argon2 hashes (`password_hash`), never plaintext.
-- Session tokens are persisted in `sessions`.
-- `switch_account` flow:
-  1. Revoke old account active sessions.
-  2. Create new session for target account.
-  3. Return new token.
-
-## API Stability Contract
-
-- All endpoints return a single envelope format:
-  - Success: `{ "data": ..., "error": null, "meta": { "request_id": "...", "timestamp": "..." } }`
-  - Failure: `{ "data": null, "error": { "code": "...", "message": "...", "details": ... }, "meta": {...} }`
-- Route paths remain unchanged from previous scaffold.
-- Desktop API client uses one shared envelope decoder and one error-handling path.
+- Success:
+  - `{ "data": ..., "error": null, "meta": { "request_id": "...", "timestamp": "..." } }`
+- Failure:
+  - `{ "data": null, "error": { "code": "...", "message": "...", "details": ... }, "meta": {...} }`
 
 ## Run + Skills Snapshot Flow
 
 1. `POST /workflows/{id}/run` enqueues a run in `workflow_runs`.
-2. Core creates a run-time skill snapshot from `skills`:
-   - merges `shared + user`
-   - same skill name uses `user` scope as winner
-3. Runner claims queued runs and materializes snapshot content into run runtime folder.
-4. Runner records `skills_loaded` and completion events in `workflow_run_events`.
+2. Core builds run-time skill snapshot from `skills`.
+   - Merge order: `shared + user`
+   - Same name conflict: `user` scope wins
+3. Runner claims queued runs and materializes snapshot paths into run runtime folder.
+4. Runner appends `workflow_run_events` and updates run status.

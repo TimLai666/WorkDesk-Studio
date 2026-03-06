@@ -97,8 +97,9 @@ async fn workflow_run_endpoint_enqueues_run_with_envelope() {
         .expect("create workflow response");
     assert_eq!(create_workflow.status(), 200);
 
-    let workflow_body =
-        to_bytes(create_workflow.into_body(), usize::MAX).await.expect("workflow body");
+    let workflow_body = to_bytes(create_workflow.into_body(), usize::MAX)
+        .await
+        .expect("workflow body");
     let workflow_payload: Value = serde_json::from_slice(&workflow_body).expect("workflow json");
     let workflow_id = workflow_payload["data"]["id"]
         .as_str()

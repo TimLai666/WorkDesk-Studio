@@ -4,7 +4,7 @@ Base path: `/api/v1`
 
 ## Envelope
 
-All responses use the same JSON envelope.
+All HTTP responses use one envelope schema.
 
 Success:
 
@@ -36,7 +36,7 @@ Failure:
 }
 ```
 
-## Error Codes (Stabilized)
+## Stabilized Error Codes
 
 - `AUTH_INVALID_CREDENTIALS`
 - `AUTH_ACCOUNT_NOT_FOUND`
@@ -49,7 +49,7 @@ Failure:
 - `BAD_REQUEST`
 - `INTERNAL_ERROR`
 
-## Endpoints
+## HTTP Endpoints
 
 ### Health
 
@@ -67,7 +67,7 @@ Failure:
 - `POST /workflows`
 - `GET /workflows/{id}`
 - `PATCH /workflows/{id}/status`
-- `POST /workflows/{id}/run` (enqueue run + build skill snapshots)
+- `POST /workflows/{id}/run` (enqueue run + build run skill snapshot)
 - `POST /workflows/{id}/proposals`
 - `POST /workflows/{id}/proposals/{proposal_id}/approve`
 
@@ -107,3 +107,39 @@ Failure:
 - `POST /office/open`
 - `POST /office/save`
 - `GET /office/version?path=<relative-path>`
+
+## Desktop Local IPC (Windows First)
+
+This section is for desktop local process coordination, not core HTTP.
+
+### Command Bus
+
+- Endpoint: `\\.\pipe\WorkDeskStudio.CommandBus`
+- Request:
+
+```json
+{
+  "type": "open_run",
+  "payload": { "run_id": "run-123" },
+  "request_id": "uuid"
+}
+```
+
+- Response:
+
+```json
+{
+  "ok": true,
+  "error": null
+}
+```
+
+### Automation Channel
+
+- Endpoint: `\\.\pipe\WorkDeskStudio.Automation`
+- Supported request types:
+  - `get_state`
+  - `refresh_runs`
+  - `dispatch_command`
+  - `cancel_selected_run`
+  - `retry_selected_run`

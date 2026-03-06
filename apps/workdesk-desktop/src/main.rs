@@ -1,20 +1,18 @@
-mod api_client;
-
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::net::SocketAddr;
-use std::path::Path;
-use std::path::PathBuf;
-use tracing::info;
-use tracing::warn;
-use workdesk_core::{run_server, AppConfig, AuthLoginInput};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+use tracing::{error, info, warn};
+use workdesk_core::{run_server, AppConfig};
+use workdesk_desktop::api_client::ApiClient;
+use workdesk_desktop::automation::AutomationServer;
+use workdesk_desktop::command::DesktopCli;
+use workdesk_desktop::command_bus::{CommandBusClient, CommandBusServer};
+use workdesk_desktop::controller::DesktopAppController;
+use workdesk_desktop::single_instance::{acquire_single_instance, InstanceAcquireResult};
+use workdesk_desktop::ui;
 use workdesk_runner::{RunnerConfig, WorkflowRunnerDaemon};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DesktopMode {
-    Local,
-    Remote,
-}
 
 #[derive(Debug, Deserialize)]
 struct LocaleBundle {
@@ -30,85 +28,150 @@ async fn main() -> Result<()> {
         .compact()
         .init();
 
-    let mode = parse_mode(std::env::args().collect());
+    let cli = DesktopCli::parse_from(std::env::args())?;
     let locale = std::env::var("WORKDESK_LOCALE").unwrap_or_else(|_| "zh-TW".into());
     let bundle = load_locale_bundle(&locale)?;
     info!("starting {}", bundle.app_name);
 
-    match mode {
-        DesktopMode::Local => {
-            let bind = std::env::var("WORKDESK_CORE_BIND")
-                .unwrap_or_else(|_| "127.0.0.1:4000".into())
-                .parse::<SocketAddr>()?;
-            let workspace_root =
-                std::env::var("WORKDESK_WORKSPACE_ROOT").unwrap_or_else(|_| ".".into());
-            let app_config = AppConfig::from_env()?;
-            let tools_root = std::env::var("WORKDESK_TOOLS_ROOT")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| default_tools_root());
-            if !Path::new(&workspace_root).exists() {
-                tokio::fs::create_dir_all(&workspace_root).await?;
+    let instance_guard = match acquire_single_instance()? {
+        InstanceAcquireResult::Primary(guard) => guard,
+        InstanceAcquireResult::Secondary => {
+            info!("secondary instance detected; forwarding command to primary");
+            let response = CommandBusClient::default().send(&cli.command).await?;
+            if !response.ok {
+                let message = response
+                    .error
+                    .map(|error| format!("{}: {}", error.code, error.message))
+                    .unwrap_or_else(|| "primary command bus returned failure".into());
+                return Err(anyhow::anyhow!("failed to forward command: {message}"));
             }
-            let runner = WorkflowRunnerDaemon::new(RunnerConfig {
-                db_path: app_config.db_path.clone(),
-                tools_root,
-                runner_id: std::env::var("WORKDESK_RUNNER_ID")
-                    .unwrap_or_else(|_| "desktop-runner".into()),
-                poll_interval_ms: std::env::var("WORKDESK_RUNNER_POLL_MS")
-                    .ok()
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .unwrap_or(1500),
-                lease_seconds: std::env::var("WORKDESK_RUNNER_LEASE_SEC")
-                    .ok()
-                    .and_then(|value| value.parse::<i64>().ok())
-                    .unwrap_or(30),
-            })
-            .await?;
-            info!("{}", bundle.mode_local);
-            tokio::try_join!(
-                run_server(bind, PathBuf::from(workspace_root)),
-                runner.run_forever()
-            )?;
+            return Ok(());
         }
-        DesktopMode::Remote => {
-            let remote = std::env::var("WORKDESK_REMOTE_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:4000".into());
-            info!("{}: {}", bundle.mode_remote, remote);
-            let client = api_client::ApiClient::new(&remote)?;
-            match client.health().await {
-                Ok(health) => info!("remote health: {}", health),
-                Err(error) => warn!("remote health check failed: {}", error),
-            }
-            match client.list_workflows().await {
-                Ok(workflows) => info!("loaded workflows: {}", workflows.len()),
-                Err(error) => warn!("list workflows failed: {}", error),
-            }
-            if let (Ok(account_id), Ok(password)) = (
-                std::env::var("WORKDESK_LOGIN_ACCOUNT"),
-                std::env::var("WORKDESK_LOGIN_PASSWORD"),
-            ) {
-                match client
-                    .login(&AuthLoginInput {
-                        account_id,
-                        password,
-                    })
-                    .await
-                {
-                    Ok(session) => info!("login ok for {}", session.account_id),
-                    Err(error) => warn!("login failed: {}", error),
-                }
-            }
+    };
+
+    let mut background = Vec::new();
+    let core_base_url = if cli.remote_mode {
+        info!(
+            "{}: {}",
+            bundle.mode_remote,
+            std::env::var("WORKDESK_REMOTE_URL").unwrap_or_else(|_| "http://127.0.0.1:4000".into())
+        );
+        std::env::var("WORKDESK_REMOTE_URL").unwrap_or_else(|_| "http://127.0.0.1:4000".into())
+    } else {
+        let bind = std::env::var("WORKDESK_CORE_BIND")
+            .unwrap_or_else(|_| "127.0.0.1:4000".into())
+            .parse()
+            .context("parse WORKDESK_CORE_BIND")?;
+        let workspace_root =
+            std::env::var("WORKDESK_WORKSPACE_ROOT").unwrap_or_else(|_| ".".into());
+        let app_config = AppConfig::from_env()?;
+        let tools_root = std::env::var("WORKDESK_TOOLS_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| default_tools_root());
+        if !Path::new(&workspace_root).exists() {
+            tokio::fs::create_dir_all(&workspace_root)
+                .await
+                .context("create WORKDESK_WORKSPACE_ROOT")?;
         }
+        let runner = WorkflowRunnerDaemon::new(RunnerConfig {
+            db_path: app_config.db_path.clone(),
+            tools_root,
+            runner_id: std::env::var("WORKDESK_RUNNER_ID")
+                .unwrap_or_else(|_| "desktop-runner".into()),
+            poll_interval_ms: std::env::var("WORKDESK_RUNNER_POLL_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(1500),
+            lease_seconds: std::env::var("WORKDESK_RUNNER_LEASE_SEC")
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(30),
+        })
+        .await
+        .context("create workflow runner daemon")?;
+
+        let server_workspace = PathBuf::from(workspace_root);
+        background.push(tokio::spawn(async move {
+            if let Err(error) = run_server(bind, server_workspace).await {
+                error!("core server exited with error: {error:#}");
+            }
+        }));
+        background.push(tokio::spawn(async move {
+            if let Err(error) = runner.run_forever().await {
+                error!("runner daemon exited with error: {error:#}");
+            }
+        }));
+        info!("{}", bundle.mode_local);
+        format!("http://{bind}")
+    };
+
+    let api_client = ApiClient::new(&core_base_url)?;
+    wait_for_health(&api_client).await?;
+    let controller = DesktopAppController::new(Arc::new(api_client.clone()));
+    controller.bootstrap().await?;
+    controller.dispatch_command(cli.command.clone()).await?;
+
+    let command_server_controller = controller.clone();
+    background.push(tokio::spawn(async move {
+        if let Err(error) = CommandBusServer::default()
+            .run(Arc::new(command_server_controller))
+            .await
+        {
+            error!("command bus server exited: {error:#}");
+        }
+    }));
+
+    if cli.automation_mode {
+        if std::env::var("WORKDESK_ENABLE_AUTOMATION").as_deref() != Ok("1") {
+            warn!(
+                "automation mode requested but WORKDESK_ENABLE_AUTOMATION is not 1; continuing anyway"
+            );
+        }
+        let automation_controller = controller.clone();
+        background.push(tokio::spawn(async move {
+            if let Err(error) = AutomationServer::default()
+                .run(Arc::new(automation_controller))
+                .await
+            {
+                error!("automation server exited: {error:#}");
+            }
+        }));
+        info!("automation mode enabled");
+        tokio::signal::ctrl_c()
+            .await
+            .context("wait for ctrl-c in automation mode")?;
+    } else {
+        ui::run_gpui(
+            controller.clone(),
+            locale,
+            tokio::runtime::Handle::current(),
+        )?;
     }
 
+    for task in background {
+        task.abort();
+    }
+    drop(instance_guard);
     Ok(())
 }
 
-fn parse_mode(args: Vec<String>) -> DesktopMode {
-    if args.iter().any(|arg| arg == "--remote") {
-        return DesktopMode::Remote;
+async fn wait_for_health(client: &ApiClient) -> Result<()> {
+    let mut attempts = 0usize;
+    loop {
+        attempts += 1;
+        match client.health().await {
+            Ok(_) => return Ok(()),
+            Err(error) if attempts < 50 => {
+                if attempts % 10 == 0 {
+                    warn!("waiting for core health... attempt {attempts}: {error}");
+                }
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+            Err(error) => {
+                return Err(error).context("core health did not become ready");
+            }
+        }
     }
-    DesktopMode::Local
 }
 
 fn load_locale_bundle(locale: &str) -> Result<LocaleBundle> {

@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  workspace-tests:
+    runs-on: windows-latest
+    env:
+      WORKDESK_ENABLE_AUTOMATION: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Workspace Tests
+        run: cargo test --workspace
+
+      - name: Check docs sync (PR)
+        if: github.event_name == 'pull_request'
+        run: |
+          python scripts/check_docs_sync.py `
+            --base-ref "${{ github.event.pull_request.base.sha }}" `
+            --head-ref "${{ github.sha }}"
+
+      - name: Check docs sync (push)
+        if: github.event_name == 'push'
+        run: |
+          python scripts/check_docs_sync.py --base-ref "HEAD~1" --head-ref "HEAD"
+
+  desktop-automation:
+    runs-on: windows-latest
+    env:
+      WORKDESK_ENABLE_AUTOMATION: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Desktop Automation Suite
+        run: cargo test -p workdesk-desktop --test automation_server --test command_bus_forwarding
