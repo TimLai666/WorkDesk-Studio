@@ -1,6 +1,6 @@
 # WorkDesk Core API
 
-Base path: `/api/v1`
+基底路徑：`/api/v1`
 
 ## Envelope
 
@@ -36,7 +36,7 @@ Base path: `/api/v1`
 }
 ```
 
-## 穩定錯誤碼
+## 固定錯誤碼
 
 - `AUTH_INVALID_CREDENTIALS`
 - `AUTH_ACCOUNT_NOT_FOUND`
@@ -67,7 +67,7 @@ Base path: `/api/v1`
 - `POST /workflows`
 - `GET /workflows/{id}`
 - `PATCH /workflows/{id}/status`
-- `POST /workflows/{id}/run`（enqueue run + 建立 run skill snapshot）
+- `POST /workflows/{id}/run`（排入 run 並建立 run skills snapshot）
 - `POST /workflows/{id}/proposals`
 - `POST /workflows/{id}/proposals/{proposal_id}/approve`
 
@@ -76,6 +76,7 @@ Base path: `/api/v1`
 - `GET /runs?limit=<n>`
 - `GET /runs/{run_id}`
 - `GET /runs/{run_id}/events?after_seq=<n>&limit=<n>`
+- `GET /runs/{run_id}/nodes`
 - `GET /runs/{run_id}/skills`
 - `POST /runs/{run_id}/cancel`
 - `POST /runs/{run_id}/retry`
@@ -97,9 +98,13 @@ Base path: `/api/v1`
 ### File System
 
 - `GET /fs/tree?path=<relative-path>`
+- `GET /fs/search?path=<relative-path>&query=<text>&limit=<n>`
 - `GET /fs/file?path=<relative-path>`
 - `PUT /fs/file`
 - `POST /fs/move`
+- `POST /fs/diff`
+- `POST /fs/terminal/start`
+- `GET /fs/terminal/session/{session_id}`
 - `DELETE /fs/path?path=<relative-path>`
 
 ### Office
@@ -107,14 +112,15 @@ Base path: `/api/v1`
 - `POST /office/open`
 - `POST /office/save`
 - `GET /office/version?path=<relative-path>`
+- `POST /office/onlyoffice/callback`
 
 ## Desktop 本機 IPC（Windows 優先）
 
-此段為 desktop 本機行程協調，不是 core HTTP API。
+這一節描述 desktop 本機行程協作，不是 core HTTP API。
 
 ### Command Bus
 
-- Endpoint：`\\.\pipe\WorkDeskStudio.CommandBus`
+- 端點：`\\.\pipe\WorkDeskStudio.CommandBus`
 - Request：
 
 ```json
@@ -136,7 +142,7 @@ Base path: `/api/v1`
 
 ### Automation Channel
 
-- Endpoint：`\\.\pipe\WorkDeskStudio.Automation`
+- 端點：`\\.\pipe\WorkDeskStudio.Automation`
 - 支援 request type：
   - `get_state`
   - `refresh_runs`

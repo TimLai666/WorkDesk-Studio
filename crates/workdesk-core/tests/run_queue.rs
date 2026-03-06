@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 use workdesk_core::{
-    CoreRepository, CoreService, CreateWorkflowInput, Scope, SqliteCoreRepository,
+    CoreRepository, CoreService, CreateWorkflowInput, RunNodeStatus, Scope, SqliteCoreRepository,
     UpsertSkillInput, WorkflowNodeInput, WorkflowNodeKind,
 };
 
@@ -65,9 +65,16 @@ async fn run_skill_snapshot_prefers_user_scope_over_shared() {
         .list_run_skills(&run.run_id)
         .await
         .expect("list run skills");
+    let node_states = service
+        .list_run_nodes(&run.run_id)
+        .await
+        .expect("list run nodes");
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].name, "deploy");
     assert_eq!(snapshots[0].scope, Scope::User);
     assert_eq!(snapshots[0].version, "2.0.0");
+    assert_eq!(node_states.len(), 1);
+    assert_eq!(node_states[0].node_id, "n1");
+    assert_eq!(node_states[0].status, RunNodeStatus::Pending);
 }

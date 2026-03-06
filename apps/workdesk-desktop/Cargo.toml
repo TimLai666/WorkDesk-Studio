@@ -19,6 +19,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 windows-sys.workspace = true
+urlencoding.workspace = true
 
 [dependencies.workdesk-core]
 path = "../../crates/workdesk-core"

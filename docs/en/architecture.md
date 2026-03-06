@@ -72,4 +72,21 @@ Scope boundaries:
    - Merge order: `shared + user`
    - Same name conflict: `user` scope wins
 3. Runner claims queued runs and materializes snapshot paths into run runtime folder.
-4. Runner appends `workflow_run_events` and updates run status.
+4. Core initializes `workflow_run_nodes` to persist node lifecycle states.
+5. Runner executes workflow nodes in DAG order and writes node transitions:
+   - `pending -> running -> succeeded|failed|canceled`
+6. Runner appends `workflow_run_events` and updates run status.
+
+## Diagnostics and Degraded Runtime Signals
+
+- Desktop controller derives diagnostics from run state.
+- If a run stays `queued` for over 90 seconds, UI snapshot includes:
+  - `RUNNER_UNAVAILABLE`
+- This signal is exposed to automation mode and visible in run-monitor UI.
+
+## Sidecar Contract Baseline
+
+- Runner includes local sidecar IPC envelope support:
+  - request: `type`, `payload`, `request_id`
+  - response: `ok`, `data`, `error`, `meta`
+- Agent prompt nodes forward run/workflow/node/skills context when sidecar endpoint is configured.

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use thiserror::Error;
 use uuid::Uuid;
@@ -231,6 +232,36 @@ pub struct AgentSession {
 pub struct AgentEvent {
     pub kind: String,
     pub payload: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CodexIpcRequest {
+    #[serde(rename = "type")]
+    pub request_type: String,
+    #[serde(default)]
+    pub payload: Value,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CodexIpcMeta {
+    pub request_id: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CodexIpcError {
+    pub code: String,
+    pub message: String,
+    pub details: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CodexIpcResponse {
+    pub ok: bool,
+    pub data: Option<Value>,
+    pub error: Option<CodexIpcError>,
+    pub meta: CodexIpcMeta,
 }
 
 #[async_trait]

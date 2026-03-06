@@ -3,9 +3,10 @@ use crate::command::DesktopCommand;
 use crate::command_bus::CommandDispatcher;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
-use workdesk_core::{RunSkillSnapshot, WorkflowRun, WorkflowRunEvent};
+use workdesk_core::{RunSkillSnapshot, WorkflowRun, WorkflowRunEvent, WorkflowRunNodeState};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -13,6 +14,13 @@ pub enum UiRoute {
     RunList,
     RunDetail,
     WorkflowDetail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiDiagnostic {
+    pub code: String,
+    pub message: String,
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,7 +32,9 @@ pub struct UiStateSnapshot {
     pub selected_workflow_id: Option<String>,
     pub runs: Vec<WorkflowRun>,
     pub run_events: Vec<WorkflowRunEvent>,
+    pub run_nodes: Vec<WorkflowRunNodeState>,
     pub run_skills: Vec<RunSkillSnapshot>,
+    pub diagnostics: Vec<UiDiagnostic>,
     pub last_error: Option<String>,
 }
 
@@ -38,7 +48,9 @@ impl Default for UiStateSnapshot {
             selected_workflow_id: None,
             runs: Vec::new(),
             run_events: Vec::new(),
+            run_nodes: Vec::new(),
             run_skills: Vec::new(),
+            diagnostics: Vec::new(),
             last_error: None,
         }
     }
@@ -53,8 +65,10 @@ pub enum ControllerAction {
     SetRuns(Vec<WorkflowRun>),
     SetRunDetails {
         events: Vec<WorkflowRunEvent>,
+        nodes: Vec<WorkflowRunNodeState>,
         skills: Vec<RunSkillSnapshot>,
     },
+    SetDiagnostics(Vec<UiDiagnostic>),
     SetError(Option<String>),
 }
 
@@ -65,10 +79,16 @@ pub fn reduce_ui_state(state: &mut UiStateSnapshot, action: ControllerAction) {
         ControllerAction::SelectRun(run_id) => state.selected_run_id = run_id,
         ControllerAction::SelectWorkflow(workflow_id) => state.selected_workflow_id = workflow_id,
         ControllerAction::SetRuns(runs) => state.runs = runs,
-        ControllerAction::SetRunDetails { events, skills } => {
+        ControllerAction::SetRunDetails {
+            events,
+            nodes,
+            skills,
+        } => {
             state.run_events = events;
+            state.run_nodes = nodes;
             state.run_skills = skills;
         }
+        ControllerAction::SetDiagnostics(diagnostics) => state.diagnostics = diagnostics,
         ControllerAction::SetError(error) => state.last_error = error,
     }
     state.revision += 1;
@@ -84,6 +104,7 @@ pub trait DesktopApi: Send + Sync {
         limit: usize,
     ) -> Result<Vec<WorkflowRunEvent>>;
     async fn list_run_skills(&self, run_id: &str) -> Result<Vec<RunSkillSnapshot>>;
+    async fn list_run_nodes(&self, run_id: &str) -> Result<Vec<WorkflowRunNodeState>>;
     async fn run_workflow(
         &self,
         workflow_id: &str,
@@ -110,6 +131,10 @@ impl DesktopApi for ApiClient {
 
     async fn list_run_skills(&self, run_id: &str) -> Result<Vec<RunSkillSnapshot>> {
         self.list_run_skills(run_id).await
+    }
+
+    async fn list_run_nodes(&self, run_id: &str) -> Result<Vec<WorkflowRunNodeState>> {
+        self.list_run_nodes(run_id).await
     }
 
     async fn run_workflow(
@@ -196,7 +221,9 @@ impl DesktopAppController {
 
     pub async fn refresh_runs(&self) -> Result<()> {
         let runs = self.api.list_runs(200).await?;
+        let diagnostics = Self::derive_diagnostics(&runs);
         self.apply(ControllerAction::SetRuns(runs));
+        self.apply(ControllerAction::SetDiagnostics(diagnostics));
         Ok(())
     }
 
@@ -234,14 +261,37 @@ impl DesktopAppController {
 
     async fn refresh_run_detail(&self, run_id: &str) -> Result<()> {
         let events = self.api.list_run_events(run_id, 0, 2000).await?;
+        let nodes = self.api.list_run_nodes(run_id).await?;
         let skills = self.api.list_run_skills(run_id).await?;
-        self.apply(ControllerAction::SetRunDetails { events, skills });
+        self.apply(ControllerAction::SetRunDetails {
+            events,
+            nodes,
+            skills,
+        });
         Ok(())
     }
 
     fn apply(&self, action: ControllerAction) {
         let mut state = self.state.write().expect("ui state write lock");
         reduce_ui_state(&mut state, action);
+    }
+
+    fn derive_diagnostics(runs: &[WorkflowRun]) -> Vec<UiDiagnostic> {
+        let now = Utc::now();
+        runs.iter()
+            .filter_map(|run| {
+                let queued_too_long = matches!(run.status, workdesk_core::RunStatus::Queued)
+                    && (now - run.created_at).num_seconds() >= 90;
+                queued_too_long.then(|| UiDiagnostic {
+                    code: "RUNNER_UNAVAILABLE".to_string(),
+                    message: format!(
+                        "Run {} has been queued for over 90 seconds. Check runner process status.",
+                        run.run_id
+                    ),
+                    run_id: Some(run.run_id.clone()),
+                })
+            })
+            .collect()
     }
 }
 
@@ -264,13 +314,16 @@ mod tests {
     use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
-    use workdesk_core::{RunSkillSnapshot, RunStatus, Scope, WorkflowRun, WorkflowRunEvent};
+    use workdesk_core::{
+        RunSkillSnapshot, RunStatus, Scope, WorkflowRun, WorkflowRunEvent, WorkflowRunNodeState,
+    };
 
     #[derive(Default)]
     struct FakeDesktopApi {
         runs: Mutex<Vec<WorkflowRun>>,
         events: Mutex<HashMap<String, Vec<WorkflowRunEvent>>>,
         skills: Mutex<HashMap<String, Vec<RunSkillSnapshot>>>,
+        nodes: Mutex<HashMap<String, Vec<WorkflowRunNodeState>>>,
     }
 
     impl FakeDesktopApi {
@@ -307,10 +360,26 @@ mod tests {
             events.insert("run-1".into(), vec![event]);
             let mut skills = HashMap::new();
             skills.insert("run-1".into(), vec![skill]);
+            let mut nodes = HashMap::new();
+            nodes.insert(
+                "run-1".into(),
+                vec![WorkflowRunNodeState {
+                    run_id: "run-1".into(),
+                    node_id: "n1".into(),
+                    kind: workdesk_core::WorkflowNodeKind::ScheduleTrigger,
+                    status: workdesk_core::RunNodeStatus::Succeeded,
+                    attempt: 1,
+                    error_message: None,
+                    started_at: Some(Utc::now()),
+                    finished_at: Some(Utc::now()),
+                    updated_at: Utc::now(),
+                }],
+            );
             Self {
                 runs: Mutex::new(vec![run]),
                 events: Mutex::new(events),
                 skills: Mutex::new(skills),
+                nodes: Mutex::new(nodes),
             }
         }
     }
@@ -341,6 +410,16 @@ mod tests {
                 .skills
                 .lock()
                 .expect("skills lock")
+                .get(run_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        async fn list_run_nodes(&self, run_id: &str) -> Result<Vec<WorkflowRunNodeState>> {
+            Ok(self
+                .nodes
+                .lock()
+                .expect("nodes lock")
                 .get(run_id)
                 .cloned()
                 .unwrap_or_default())
@@ -426,7 +505,35 @@ mod tests {
         assert_eq!(snapshot.route, UiRoute::RunDetail);
         assert_eq!(snapshot.selected_run_id.as_deref(), Some("run-1"));
         assert_eq!(snapshot.run_events.len(), 1);
+        assert_eq!(snapshot.run_nodes.len(), 1);
         assert_eq!(snapshot.run_skills.len(), 1);
         assert!(snapshot.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_runs_generates_runner_unavailable_diagnostic() {
+        let api = Arc::new(FakeDesktopApi {
+            runs: Mutex::new(vec![WorkflowRun {
+                run_id: "run-stuck".into(),
+                workflow_id: "wf-1".into(),
+                requested_by: Some("tester".into()),
+                status: RunStatus::Queued,
+                started_at: None,
+                finished_at: None,
+                cancel_requested: false,
+                error_message: None,
+                created_at: Utc::now() - chrono::Duration::seconds(95),
+                updated_at: Utc::now(),
+            }]),
+            events: Mutex::new(HashMap::new()),
+            skills: Mutex::new(HashMap::new()),
+            nodes: Mutex::new(HashMap::new()),
+        });
+        let controller = DesktopAppController::new(api);
+        controller.refresh_runs().await.expect("refresh runs");
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.diagnostics.len(), 1);
+        assert_eq!(snapshot.diagnostics[0].code, "RUNNER_UNAVAILABLE");
+        assert_eq!(snapshot.diagnostics[0].run_id.as_deref(), Some("run-stuck"));
     }
 }

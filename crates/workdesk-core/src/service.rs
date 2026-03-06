@@ -4,7 +4,7 @@ use crate::types::{
     ApprovalState, AuthLoginInput, AuthSessionResponse, AuthSwitchInput, CreateProposalInput,
     CreateWorkflowInput, MemoryRecord, RunSkillSnapshot, SkillRecord, UpsertMemoryInput,
     UpsertSkillInput, WorkflowChangeProposal, WorkflowDefinition, WorkflowNode, WorkflowRun,
-    WorkflowRunEvent, WorkflowStatus,
+    WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -242,7 +242,7 @@ impl CoreService {
         workflow_id: &str,
         requested_by: Option<&str>,
     ) -> std::result::Result<WorkflowRun, CoreError> {
-        let _ = self.get_workflow(workflow_id).await?;
+        let workflow = self.get_workflow(workflow_id).await?;
         let run = self
             .repo
             .create_run(workflow_id, requested_by)
@@ -250,6 +250,10 @@ impl CoreService {
             .map_err(|e| CoreError::Internal(e.to_string()))?;
         self.repo
             .create_run_skill_snapshots(&run.run_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.repo
+            .create_run_node_states(&run.run_id, &workflow.nodes)
             .await
             .map_err(|e| CoreError::Internal(e.to_string()))?;
         self.repo
@@ -290,6 +294,17 @@ impl CoreService {
         let _ = self.get_run(run_id).await?;
         self.repo
             .list_run_events(run_id, after_seq, limit)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn list_run_nodes(
+        &self,
+        run_id: &str,
+    ) -> std::result::Result<Vec<WorkflowRunNodeState>, CoreError> {
+        let _ = self.get_run(run_id).await?;
+        self.repo
+            .list_run_node_states(run_id)
             .await
             .map_err(|e| CoreError::Internal(e.to_string()))
     }

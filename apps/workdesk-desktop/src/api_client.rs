@@ -5,7 +5,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use workdesk_core::{
     AuthLoginInput, AuthSessionResponse, CancelRunInput, RetryRunInput, RunSkillSnapshot,
-    RunWorkflowInput, WorkflowDefinition, WorkflowRun, WorkflowRunEvent,
+    RunWorkflowInput, TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowRun,
+    WorkflowRunEvent, WorkflowRunNodeState,
 };
 
 #[derive(Debug, Clone)]
@@ -108,6 +109,17 @@ impl ApiClient {
         parse_envelope(response).await
     }
 
+    pub async fn list_run_nodes(&self, run_id: &str) -> Result<Vec<WorkflowRunNodeState>> {
+        let url = self.endpoint(&format!("/api/v1/runs/{run_id}/nodes"))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("request run nodes for {run_id}"))?;
+        parse_envelope(response).await
+    }
+
     pub async fn run_workflow(
         &self,
         workflow_id: &str,
@@ -155,6 +167,65 @@ impl ApiClient {
             .send()
             .await
             .with_context(|| format!("request retry run {run_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn fs_search(
+        &self,
+        path: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<workdesk_core::FsSearchMatch>> {
+        let url = self.endpoint(&format!(
+            "/api/v1/fs/search?path={}&query={}&limit={}",
+            urlencoding::encode(path),
+            urlencoding::encode(query),
+            limit.clamp(1, 2000)
+        ))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("request fs search")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn fs_diff(&self, left_path: &str, right_path: &str) -> Result<workdesk_core::FsDiffResponse> {
+        let url = self.endpoint("/api/v1/fs/diff")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&workdesk_core::FsDiffInput {
+                left_path: left_path.to_string(),
+                right_path: right_path.to_string(),
+            })
+            .send()
+            .await
+            .context("request fs diff")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn terminal_start(&self, input: &TerminalStartInput) -> Result<TerminalSessionResponse> {
+        let url = self.endpoint("/api/v1/fs/terminal/start")?;
+        let response = self
+            .http
+            .post(url)
+            .json(input)
+            .send()
+            .await
+            .context("request terminal start")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn terminal_session(&self, session_id: &str) -> Result<TerminalSessionResponse> {
+        let url = self.endpoint(&format!("/api/v1/fs/terminal/session/{session_id}"))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("request terminal session")?;
         parse_envelope(response).await
     }
 

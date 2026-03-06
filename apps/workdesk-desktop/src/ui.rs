@@ -217,8 +217,22 @@ impl Render for WorkdeskMainView {
                                     .unwrap_or_else(|| "(none)".into())
                             ))
                             .child(render_event_list(&snapshot.run_events))
+                            .child(render_node_list(&snapshot.run_nodes))
                             .child(render_skill_list(&snapshot.run_skills)),
                     ),
+            )
+            .child(
+                snapshot
+                    .diagnostics
+                    .iter()
+                    .fold(div().flex().flex_col().gap_1().child("Diagnostics"), |div, item| {
+                        let target = item
+                            .run_id
+                            .as_ref()
+                            .map(|id| format!(" run={id}"))
+                            .unwrap_or_default();
+                        div.child(format!("{}:{}{}", item.code, item.message, target))
+                    }),
             )
             .when_some(snapshot.last_error.as_ref(), |div, error| {
                 div.child(format!("Error: {error}"))
@@ -274,4 +288,16 @@ fn render_skill_list(skills: &[RunSkillSnapshot]) -> impl IntoElement {
             ))
         },
     )
+}
+
+fn render_node_list(nodes: &[workdesk_core::WorkflowRunNodeState]) -> impl IntoElement {
+    nodes
+        .iter()
+        .take(100)
+        .fold(div().flex().flex_col().gap_1().child("Run Nodes"), |div, node| {
+            div.child(format!(
+                "{} {:?} attempt={} {:?}",
+                node.node_id, node.kind, node.attempt, node.status
+            ))
+        })
 }

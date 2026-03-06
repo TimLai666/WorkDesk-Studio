@@ -1,9 +1,10 @@
 use crate::types::{
-    approval_state_from_db, approval_state_to_db, parse_rfc3339_utc, run_status_from_db,
-    run_status_to_db, scope_from_db, scope_to_db, workflow_kind_from_db, workflow_kind_to_db,
-    workflow_status_from_db, workflow_status_to_db, AuthSessionResponse, MemoryRecord,
-    RunSkillSnapshot, RunStatus, SkillRecord, WorkflowChangeProposal, WorkflowDefinition,
-    WorkflowEdge, WorkflowNode, WorkflowRun, WorkflowRunEvent,
+    approval_state_from_db, approval_state_to_db, parse_rfc3339_utc, run_node_status_from_db,
+    run_node_status_to_db, run_status_from_db, run_status_to_db, scope_from_db, scope_to_db,
+    workflow_kind_from_db, workflow_kind_to_db, workflow_status_from_db, workflow_status_to_db,
+    AuthSessionResponse, MemoryRecord, RunNodeStatus, RunSkillSnapshot, RunStatus, SkillRecord,
+    WorkflowChangeProposal, WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowRun,
+    WorkflowRunEvent, WorkflowRunNodeState,
 };
 use anyhow::{anyhow, Context, Result};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -68,6 +69,19 @@ pub trait CoreRepository: Send + Sync {
         after_seq: i64,
         limit: usize,
     ) -> Result<Vec<WorkflowRunEvent>>;
+    async fn create_run_node_states(
+        &self,
+        run_id: &str,
+        nodes: &[WorkflowNode],
+    ) -> Result<Vec<WorkflowRunNodeState>>;
+    async fn list_run_node_states(&self, run_id: &str) -> Result<Vec<WorkflowRunNodeState>>;
+    async fn set_run_node_status(
+        &self,
+        run_id: &str,
+        node_id: &str,
+        status: RunNodeStatus,
+        error_message: Option<&str>,
+    ) -> Result<()>;
     async fn request_cancel_run(&self, run_id: &str) -> Result<Option<WorkflowRun>>;
     async fn retry_run(
         &self,
@@ -205,6 +219,22 @@ impl SqliteCoreRepository {
             cancel_requested: row.try_get::<i64, _>("cancel_requested")? != 0,
             error_message: row.try_get("error_message")?,
             created_at: parse_rfc3339_utc(&row.try_get::<String, _>("created_at")?)?,
+            updated_at: parse_rfc3339_utc(&row.try_get::<String, _>("updated_at")?)?,
+        })
+    }
+
+    fn map_run_node_row(row: sqlx::sqlite::SqliteRow) -> Result<WorkflowRunNodeState> {
+        let started_at: Option<String> = row.try_get("started_at")?;
+        let finished_at: Option<String> = row.try_get("finished_at")?;
+        Ok(WorkflowRunNodeState {
+            run_id: row.try_get("run_id")?,
+            node_id: row.try_get("node_id")?,
+            kind: workflow_kind_from_db(&row.try_get::<String, _>("kind")?)?,
+            status: run_node_status_from_db(&row.try_get::<String, _>("status")?)?,
+            attempt: row.try_get("attempt")?,
+            error_message: row.try_get("error_message")?,
+            started_at: started_at.as_deref().map(parse_rfc3339_utc).transpose()?,
+            finished_at: finished_at.as_deref().map(parse_rfc3339_utc).transpose()?,
             updated_at: parse_rfc3339_utc(&row.try_get::<String, _>("updated_at")?)?,
         })
     }
@@ -660,6 +690,85 @@ impl CoreRepository for SqliteCoreRepository {
                 })
             })
             .collect()
+    }
+
+    async fn create_run_node_states(
+        &self,
+        run_id: &str,
+        nodes: &[WorkflowNode],
+    ) -> Result<Vec<WorkflowRunNodeState>> {
+        let now = Utc::now().to_rfc3339();
+        let mut tx = self.pool.begin().await?;
+        for node in nodes {
+            sqlx::query(
+                "INSERT INTO workflow_run_nodes
+                 (run_id, node_id, kind, status, attempt, error_message, started_at, finished_at, updated_at)
+                 VALUES (?, ?, ?, ?, 0, NULL, NULL, NULL, ?)",
+            )
+            .bind(run_id)
+            .bind(&node.id)
+            .bind(workflow_kind_to_db(&node.kind))
+            .bind(run_node_status_to_db(&RunNodeStatus::Pending))
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        self.list_run_node_states(run_id).await
+    }
+
+    async fn list_run_node_states(&self, run_id: &str) -> Result<Vec<WorkflowRunNodeState>> {
+        let rows = sqlx::query(
+            "SELECT run_id, node_id, kind, status, attempt, error_message, started_at, finished_at, updated_at
+             FROM workflow_run_nodes
+             WHERE run_id = ?
+             ORDER BY node_id ASC",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(Self::map_run_node_row).collect()
+    }
+
+    async fn set_run_node_status(
+        &self,
+        run_id: &str,
+        node_id: &str,
+        status: RunNodeStatus,
+        error_message: Option<&str>,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let started_at = matches!(status, RunNodeStatus::Running).then_some(now.clone());
+        let finished_at = matches!(
+            status,
+            RunNodeStatus::Succeeded
+                | RunNodeStatus::Failed
+                | RunNodeStatus::Skipped
+                | RunNodeStatus::Canceled
+        )
+        .then_some(now.clone());
+        let increment_attempt = if matches!(status, RunNodeStatus::Running) {
+            ", attempt = attempt + 1"
+        } else {
+            ""
+        };
+        let sql = format!(
+            "UPDATE workflow_run_nodes
+             SET status = ?, error_message = ?, started_at = COALESCE(?, started_at), finished_at = COALESCE(?, finished_at), updated_at = ? {}
+             WHERE run_id = ? AND node_id = ?",
+            increment_attempt
+        );
+        sqlx::query(&sql)
+            .bind(run_node_status_to_db(&status))
+            .bind(error_message)
+            .bind(started_at)
+            .bind(finished_at)
+            .bind(now)
+            .bind(run_id)
+            .bind(node_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     async fn request_cancel_run(&self, run_id: &str) -> Result<Option<WorkflowRun>> {

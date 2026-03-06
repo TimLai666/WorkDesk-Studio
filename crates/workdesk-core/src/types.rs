@@ -96,6 +96,13 @@ pub struct FsQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsSearchQuery {
+    pub path: String,
+    pub query: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FsTreeEntry {
     pub path: String,
     pub is_dir: bool,
@@ -108,6 +115,49 @@ pub struct FsReadResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsSearchMatch {
+    pub path: String,
+    pub line: usize,
+    pub preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsDiffInput {
+    pub left_path: String,
+    pub right_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsDiffLine {
+    pub kind: String,
+    pub left_line: Option<usize>,
+    pub right_line: Option<usize>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsDiffResponse {
+    pub left_path: String,
+    pub right_path: String,
+    pub hunks: Vec<FsDiffLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalStartInput {
+    pub path: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalSessionResponse {
+    pub session_id: String,
+    pub status: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OfficeOpenInput {
     pub path: String,
 }
@@ -116,6 +166,12 @@ pub struct OfficeOpenInput {
 pub struct OfficeSaveInput {
     pub path: String,
     pub content_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnlyOfficeCallbackInput {
+    #[serde(default)]
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +228,30 @@ pub struct WorkflowRunEvent {
     pub event_type: String,
     pub payload: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunNodeStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Skipped,
+    Canceled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRunNodeState {
+    pub run_id: String,
+    pub node_id: String,
+    pub kind: WorkflowNodeKind,
+    pub status: RunNodeStatus,
+    pub attempt: i64,
+    pub error_message: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,5 +428,28 @@ pub fn run_status_from_db(value: &str) -> anyhow::Result<RunStatus> {
         "failed" => Ok(RunStatus::Failed),
         "canceled" => Ok(RunStatus::Canceled),
         other => Err(anyhow::anyhow!("unknown run status: {other}")),
+    }
+}
+
+pub fn run_node_status_to_db(status: &RunNodeStatus) -> &'static str {
+    match status {
+        RunNodeStatus::Pending => "pending",
+        RunNodeStatus::Running => "running",
+        RunNodeStatus::Succeeded => "succeeded",
+        RunNodeStatus::Failed => "failed",
+        RunNodeStatus::Skipped => "skipped",
+        RunNodeStatus::Canceled => "canceled",
+    }
+}
+
+pub fn run_node_status_from_db(value: &str) -> anyhow::Result<RunNodeStatus> {
+    match value {
+        "pending" => Ok(RunNodeStatus::Pending),
+        "running" => Ok(RunNodeStatus::Running),
+        "succeeded" => Ok(RunNodeStatus::Succeeded),
+        "failed" => Ok(RunNodeStatus::Failed),
+        "skipped" => Ok(RunNodeStatus::Skipped),
+        "canceled" => Ok(RunNodeStatus::Canceled),
+        other => Err(anyhow::anyhow!("unknown run node status: {other}")),
     }
 }

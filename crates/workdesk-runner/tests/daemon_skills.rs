@@ -1,7 +1,7 @@
 use tempfile::TempDir;
 use workdesk_core::{
-    CoreRepository, RunStatus, Scope, SkillRecord, SqliteCoreRepository, WorkflowDefinition,
-    WorkflowNode, WorkflowNodeKind, WorkflowStatus,
+    CoreRepository, RunNodeStatus, RunStatus, Scope, SkillRecord, SqliteCoreRepository,
+    WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus,
 };
 use workdesk_runner::{RunnerConfig, WorkflowRunnerDaemon};
 
@@ -27,7 +27,7 @@ async fn daemon_materializes_skill_snapshots_before_finishing_run() {
         .expect("connect sqlite");
     repo.migrate().await.expect("migrate");
 
-    repo.create_workflow(&WorkflowDefinition {
+    let workflow = WorkflowDefinition {
         id: "wf-runner".into(),
         name: "runner".into(),
         timezone: "Asia/Taipei".into(),
@@ -38,9 +38,8 @@ async fn daemon_materializes_skill_snapshots_before_finishing_run() {
         edges: vec![],
         version: 1,
         status: WorkflowStatus::Draft,
-    })
-    .await
-    .expect("create workflow");
+    };
+    repo.create_workflow(&workflow).await.expect("create workflow");
     repo.upsert_skill(&SkillRecord {
         scope: Scope::User,
         name: "deploy".into(),
@@ -58,6 +57,9 @@ async fn daemon_materializes_skill_snapshots_before_finishing_run() {
     repo.create_run_skill_snapshots(&run.run_id)
         .await
         .expect("create snapshots");
+    repo.create_run_node_states(&run.run_id, &workflow.nodes)
+        .await
+        .expect("create run node states");
 
     let daemon = WorkflowRunnerDaemon::new(RunnerConfig {
         db_path: db_path.clone(),
@@ -92,4 +94,12 @@ async fn daemon_materializes_skill_snapshots_before_finishing_run() {
         "expected copied skill file at {}",
         copied.display()
     );
+
+    let node_states = repo
+        .list_run_node_states(&run.run_id)
+        .await
+        .expect("list node states");
+    assert_eq!(node_states.len(), 1);
+    assert_eq!(node_states[0].node_id, "n1");
+    assert_eq!(node_states[0].status, RunNodeStatus::Succeeded);
 }

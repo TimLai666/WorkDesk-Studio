@@ -6,8 +6,11 @@ WorkDesk Studio is a Rust-first agent workbench for daily automation:
 - Local desktop mode (Windows-first) and remote/server-ready API shape
 - Codex CLI adapter (`AgentProvider`) with login/logout/switch account endpoints
 - Isolated runtime path strategy for Python/JS/Go code nodes
+- Runner DAG node lifecycle persistence (`workflow_run_nodes`)
+- Sidecar IPC contract baseline for agent prompt context
 - Skills and memory stores with user/shared scope
-- Workspace file API and office open/save/version API scaffolding
+- Workspace file API including search/diff/terminal session endpoints
+- Office open/save/version API baseline with revision snapshot persistence
 
 ## Repository Layout
 
@@ -47,16 +50,17 @@ cargo run -p workdesk-core
 - Auth: `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/switch`
 - Workflows: `GET/POST /api/v1/workflows`, `GET /api/v1/workflows/{id}`, `PATCH /api/v1/workflows/{id}/status`
 - Workflow Runtime: `POST /api/v1/workflows/{id}/run`
+- Run Introspection: `GET /api/v1/runs/{run_id}/events`, `GET /api/v1/runs/{run_id}/nodes`, `GET /api/v1/runs/{run_id}/skills`
 - Proposal Flow: `POST /api/v1/workflows/{id}/proposals`, `POST /api/v1/workflows/{id}/proposals/{proposal_id}/approve`
 - Skills: `GET/POST /api/v1/skills`, `GET /api/v1/skills/export`, `POST /api/v1/skills/import`
 - Memory: `GET/POST /api/v1/memory`, `GET /api/v1/memory/export`, `POST /api/v1/memory/import`
-- Filesystem: `GET /api/v1/fs/tree`, `GET/PUT /api/v1/fs/file`, `POST /api/v1/fs/move`, `DELETE /api/v1/fs/path`
+- Filesystem: `GET /api/v1/fs/tree`, `GET /api/v1/fs/search`, `GET/PUT /api/v1/fs/file`, `POST /api/v1/fs/move`, `POST /api/v1/fs/diff`, `POST /api/v1/fs/terminal/start`, `GET /api/v1/fs/terminal/session/{id}`, `DELETE /api/v1/fs/path`
 - Office: `POST /api/v1/office/open`, `POST /api/v1/office/save`, `GET /api/v1/office/version`
 
 ## Current Scope
 
-This repo now includes a local persistent core baseline (`sqlx + SQLite`), stabilized API envelope responses, and desktop-side envelope decoding for remote mode.
-Full UI canvas and embedded OnlyOffice editor wiring remain next incremental implementation slices.
+This repo now includes a local persistent core baseline (`sqlx + SQLite`), stabilized API envelope responses, run-node lifecycle persistence, and desktop diagnostics for runner availability.
+Full visual workflow canvas editing and bundled embedded OnlyOffice runtime remain next implementation slices.
 
 ## Documentation
 

@@ -4,10 +4,12 @@ use crate::repository::SqliteCoreRepository;
 use crate::service::CoreService;
 use crate::types::{
     ApiEnvelope, ApprovalInput, AuthLoginInput, AuthLogoutInput, AuthSwitchInput, CancelRunInput,
-    CreateProposalInput, CreateWorkflowInput, FsMoveInput, FsQuery, FsReadResponse, FsTreeEntry,
-    FsWriteInput, OfficeOpenInput, OfficeSaveInput, OfficeVersionResponse, RetryRunInput,
-    RunEventsQuery, RunListQuery, RunWorkflowInput, UpdateWorkflowStatusInput, UpsertMemoryInput,
-    UpsertSkillInput,
+    CreateProposalInput, CreateWorkflowInput, FsDiffInput, FsDiffLine, FsDiffResponse, FsMoveInput,
+    FsQuery, FsReadResponse, FsSearchMatch, FsSearchQuery, FsTreeEntry, FsWriteInput,
+    OfficeOpenInput, OfficeSaveInput, OfficeVersionResponse, OnlyOfficeCallbackInput,
+    RetryRunInput, RunEventsQuery, RunListQuery, RunWorkflowInput, TerminalSessionResponse,
+    TerminalStartInput,
+    UpdateWorkflowStatusInput, UpsertMemoryInput, UpsertSkillInput,
 };
 use anyhow::{Context, Result};
 use axum::extract::{Path, Query, State};
@@ -18,12 +20,17 @@ use base64::Engine;
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Component, PathBuf};
 use std::sync::Arc;
+use tokio::process::Command;
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct ApiState {
     service: CoreService,
+    terminal_sessions: Arc<RwLock<HashMap<String, TerminalSessionResponse>>>,
 }
 
 pub fn build_router(service: CoreService) -> Router {
@@ -56,17 +63,26 @@ pub fn build_router(service: CoreService) -> Router {
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
         .route("/api/v1/runs/{run_id}/events", get(list_run_events))
+        .route("/api/v1/runs/{run_id}/nodes", get(list_run_nodes))
         .route("/api/v1/runs/{run_id}/skills", get(list_run_skills))
         .route("/api/v1/runs/{run_id}/cancel", post(cancel_run))
         .route("/api/v1/runs/{run_id}/retry", post(retry_run))
         .route("/api/v1/fs/tree", get(fs_tree))
+        .route("/api/v1/fs/search", get(fs_search))
         .route("/api/v1/fs/file", get(fs_read).put(fs_write))
         .route("/api/v1/fs/move", post(fs_move))
+        .route("/api/v1/fs/diff", post(fs_diff))
+        .route("/api/v1/fs/terminal/start", post(fs_terminal_start))
+        .route("/api/v1/fs/terminal/session/{session_id}", get(fs_terminal_session))
         .route("/api/v1/fs/path", delete(fs_delete))
         .route("/api/v1/office/open", post(office_open))
         .route("/api/v1/office/save", post(office_save))
         .route("/api/v1/office/version", get(office_versions))
-        .with_state(ApiState { service })
+        .route("/api/v1/office/onlyoffice/callback", post(onlyoffice_callback))
+        .with_state(ApiState {
+            service,
+            terminal_sessions: Arc::new(RwLock::new(HashMap::new())),
+        })
 }
 
 pub async fn run_server_with_config(config: AppConfig) -> Result<()> {
@@ -322,6 +338,28 @@ async fn fs_tree(
     Ok(ok(entries))
 }
 
+async fn fs_search(
+    State(state): State<ApiState>,
+    Query(query): Query<FsSearchQuery>,
+) -> Result<Json<ApiEnvelope<Vec<FsSearchMatch>>>, ApiHttpError> {
+    if query.query.trim().is_empty() {
+        return Err(ApiHttpError::from(CoreError::BadRequest(
+            "query must not be empty".into(),
+        )));
+    }
+    let root = resolve_workspace_path(state.service.workspace_root(), &query.path)?;
+    let limit = query.limit.unwrap_or(200).clamp(1, 2000);
+    let matches = search_workspace_text(
+        state.service.workspace_root().clone(),
+        root,
+        query.query,
+        limit,
+    )
+    .await
+    .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+    Ok(ok(matches))
+}
+
 async fn fs_read(
     State(state): State<ApiState>,
     Query(query): Query<FsQuery>,
@@ -374,6 +412,72 @@ async fn fs_move(
         .await
         .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
     Ok(ok(json!({"ok": true})))
+}
+
+async fn fs_diff(
+    State(state): State<ApiState>,
+    Json(input): Json<FsDiffInput>,
+) -> Result<Json<ApiEnvelope<FsDiffResponse>>, ApiHttpError> {
+    let left = resolve_workspace_path(state.service.workspace_root(), &input.left_path)?;
+    let right = resolve_workspace_path(state.service.workspace_root(), &input.right_path)?;
+    let left_text = tokio::fs::read_to_string(&left)
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+    let right_text = tokio::fs::read_to_string(&right)
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+
+    Ok(ok(FsDiffResponse {
+        left_path: input.left_path,
+        right_path: input.right_path,
+        hunks: compute_line_diff(&left_text, &right_text),
+    }))
+}
+
+async fn fs_terminal_start(
+    State(state): State<ApiState>,
+    Json(input): Json<TerminalStartInput>,
+) -> Result<Json<ApiEnvelope<TerminalSessionResponse>>, ApiHttpError> {
+    let target = resolve_workspace_path(state.service.workspace_root(), &input.path)?;
+    let metadata = tokio::fs::metadata(&target)
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+    if !metadata.is_dir() {
+        return Err(ApiHttpError::from(CoreError::BadRequest(format!(
+            "terminal path must be directory: {}",
+            input.path
+        ))));
+    }
+
+    let output = execute_terminal_command(&target, &input.command)
+        .await
+        .map_err(|e| ApiHttpError::from(CoreError::Internal(e.to_string())))?;
+
+    let session = TerminalSessionResponse {
+        session_id: Uuid::new_v4().to_string(),
+        status: "exited".to_string(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        exit_code: output.status.code(),
+    };
+    state
+        .terminal_sessions
+        .write()
+        .await
+        .insert(session.session_id.clone(), session.clone());
+    Ok(ok(session))
+}
+
+async fn fs_terminal_session(
+    Path(session_id): Path<String>,
+    State(state): State<ApiState>,
+) -> Result<Json<ApiEnvelope<TerminalSessionResponse>>, ApiHttpError> {
+    let sessions = state.terminal_sessions.read().await;
+    let session = sessions
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| ApiHttpError::from(CoreError::BadRequest("terminal session not found".into())))?;
+    Ok(ok(session))
 }
 
 async fn fs_delete(
@@ -446,6 +550,15 @@ async fn office_versions(
     }))
 }
 
+async fn onlyoffice_callback(
+    Json(input): Json<OnlyOfficeCallbackInput>,
+) -> Result<Json<ApiEnvelope<Value>>, ApiHttpError> {
+    Ok(ok(json!({
+        "accepted": true,
+        "echo": input.payload
+    })))
+}
+
 async fn list_runs(
     State(state): State<ApiState>,
     Query(query): Query<RunListQuery>,
@@ -485,6 +598,18 @@ async fn list_run_events(
         .await
         .map_err(ApiHttpError::from)?;
     Ok(ok(events))
+}
+
+async fn list_run_nodes(
+    Path(run_id): Path<String>,
+    State(state): State<ApiState>,
+) -> Result<Json<ApiEnvelope<Vec<crate::types::WorkflowRunNodeState>>>, ApiHttpError> {
+    let nodes = state
+        .service
+        .list_run_nodes(&run_id)
+        .await
+        .map_err(ApiHttpError::from)?;
+    Ok(ok(nodes))
 }
 
 async fn list_run_skills(
@@ -564,4 +689,122 @@ async fn list_directory_tree(workspace_root: &PathBuf, root: &PathBuf) -> Result
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
+}
+
+async fn search_workspace_text(
+    workspace_root: PathBuf,
+    root: PathBuf,
+    query: String,
+    limit: usize,
+) -> Result<Vec<FsSearchMatch>> {
+    tokio::task::spawn_blocking(move || {
+        let mut matches = Vec::new();
+        let mut stack = vec![root];
+        while let Some(path) = stack.pop() {
+            let metadata = std::fs::metadata(&path)?;
+            if metadata.is_dir() {
+                for entry in std::fs::read_dir(path)? {
+                    stack.push(entry?.path());
+                }
+                continue;
+            }
+
+            let content = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+            for (index, line) in content.lines().enumerate() {
+                if !line.contains(&query) {
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(&workspace_root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                matches.push(FsSearchMatch {
+                    path: relative,
+                    line: index + 1,
+                    preview: line.to_string(),
+                });
+                if matches.len() >= limit {
+                    return Ok(matches);
+                }
+            }
+        }
+        Ok(matches)
+    })
+    .await?
+}
+
+fn compute_line_diff(left: &str, right: &str) -> Vec<FsDiffLine> {
+    let left_lines: Vec<&str> = left.lines().collect();
+    let right_lines: Vec<&str> = right.lines().collect();
+    let mut hunks = Vec::new();
+    let mut i = 0usize;
+    let mut j = 0usize;
+
+    while i < left_lines.len() || j < right_lines.len() {
+        match (left_lines.get(i), right_lines.get(j)) {
+            (Some(&l), Some(&r)) if l == r => {
+                i += 1;
+                j += 1;
+            }
+            (Some(&l), Some(&r)) => {
+                hunks.push(FsDiffLine {
+                    kind: "delete".to_string(),
+                    left_line: Some(i + 1),
+                    right_line: None,
+                    text: l.to_string(),
+                });
+                hunks.push(FsDiffLine {
+                    kind: "insert".to_string(),
+                    left_line: None,
+                    right_line: Some(j + 1),
+                    text: r.to_string(),
+                });
+                i += 1;
+                j += 1;
+            }
+            (Some(&l), None) => {
+                hunks.push(FsDiffLine {
+                    kind: "delete".to_string(),
+                    left_line: Some(i + 1),
+                    right_line: None,
+                    text: l.to_string(),
+                });
+                i += 1;
+            }
+            (None, Some(&r)) => {
+                hunks.push(FsDiffLine {
+                    kind: "insert".to_string(),
+                    left_line: None,
+                    right_line: Some(j + 1),
+                    text: r.to_string(),
+                });
+                j += 1;
+            }
+            (None, None) => break,
+        }
+    }
+    hunks
+}
+
+async fn execute_terminal_command(dir: &PathBuf, command: &str) -> Result<std::process::Output> {
+    #[cfg(windows)]
+    let mut process = {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(command);
+        cmd
+    };
+
+    #[cfg(not(windows))]
+    let mut process = {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-lc").arg(command);
+        cmd
+    };
+
+    process.current_dir(dir);
+    Ok(process.output().await?)
 }

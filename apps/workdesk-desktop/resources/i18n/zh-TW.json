@@ -1,5 +1,5 @@
 {
   "app_name": "WorkDesk Studio",
-  "mode_local": "已啟動本機模式（含 Core Service）",
-  "mode_remote": "已啟動遠端模式，連線目標"
+  "mode_local": "本機模式已啟動（內嵌 Core Service）",
+  "mode_remote": "遠端模式已啟動，目標"
 }

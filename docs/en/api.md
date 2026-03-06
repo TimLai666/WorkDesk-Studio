@@ -76,6 +76,7 @@ Failure:
 - `GET /runs?limit=<n>`
 - `GET /runs/{run_id}`
 - `GET /runs/{run_id}/events?after_seq=<n>&limit=<n>`
+- `GET /runs/{run_id}/nodes`
 - `GET /runs/{run_id}/skills`
 - `POST /runs/{run_id}/cancel`
 - `POST /runs/{run_id}/retry`
@@ -97,9 +98,13 @@ Failure:
 ### File System
 
 - `GET /fs/tree?path=<relative-path>`
+- `GET /fs/search?path=<relative-path>&query=<text>&limit=<n>`
 - `GET /fs/file?path=<relative-path>`
 - `PUT /fs/file`
 - `POST /fs/move`
+- `POST /fs/diff`
+- `POST /fs/terminal/start`
+- `GET /fs/terminal/session/{session_id}`
 - `DELETE /fs/path?path=<relative-path>`
 
 ### Office
@@ -107,6 +112,7 @@ Failure:
 - `POST /office/open`
 - `POST /office/save`
 - `GET /office/version?path=<relative-path>`
+- `POST /office/onlyoffice/callback`
 
 ## Desktop Local IPC (Windows First)
 

@@ -11,6 +11,13 @@
 cargo test --workspace
 ```
 
+## Validate OpenSpec Baseline + Changes
+
+```powershell
+openspec validate --changes --strict
+openspec validate --specs --strict
+```
+
 ## Start Desktop in Local Mode
 
 ```powershell
@@ -67,3 +74,10 @@ Automation mode enables test IPC channel for:
 - reading `UiStateSnapshot`
 - dispatching desktop commands
 - triggering cancel/retry actions
+
+## New FS Utility Endpoints (Local/Remote)
+
+- `GET /api/v1/fs/search?path=<path>&query=<text>&limit=<n>`
+- `POST /api/v1/fs/diff`
+- `POST /api/v1/fs/terminal/start`
+- `GET /api/v1/fs/terminal/session/{session_id}`

@@ -155,18 +155,39 @@ fn app_config_allows_db_override() {
     let old_bind = std::env::var("WORKDESK_CORE_BIND").ok();
     let old_workspace = std::env::var("WORKDESK_WORKSPACE_ROOT").ok();
     let old_locale = std::env::var("WORKDESK_LOCALE").ok();
+    let old_onlyoffice_host = std::env::var("WORKDESK_ONLYOFFICE_HOST").ok();
+    let old_onlyoffice_port = std::env::var("WORKDESK_ONLYOFFICE_PORT").ok();
+    let old_sidecar = std::env::var("WORKDESK_SIDECAR_PATH").ok();
+    let old_manifest = std::env::var("WORKDESK_TOOLCHAIN_MANIFEST").ok();
+    let old_app_channel = std::env::var("WORKDESK_APP_UPDATE_CHANNEL").ok();
+    let old_toolchain_channel = std::env::var("WORKDESK_TOOLCHAIN_UPDATE_CHANNEL").ok();
     let db_override = std::env::temp_dir().join("workdesk-config-test.db");
     std::env::set_var("WORKDESK_DB_PATH", &db_override);
     std::env::set_var("WORKDESK_CORE_BIND", "127.0.0.1:4100");
     std::env::set_var("WORKDESK_WORKSPACE_ROOT", ".");
     std::env::set_var("WORKDESK_LOCALE", "en");
+    std::env::set_var("WORKDESK_ONLYOFFICE_HOST", "127.0.0.1");
+    std::env::set_var("WORKDESK_ONLYOFFICE_PORT", "9001");
+    std::env::set_var("WORKDESK_SIDECAR_PATH", "C:/tmp/sidecar/node.exe");
+    std::env::set_var("WORKDESK_TOOLCHAIN_MANIFEST", "C:/tmp/toolchains.json");
+    std::env::set_var("WORKDESK_APP_UPDATE_CHANNEL", "beta");
+    std::env::set_var("WORKDESK_TOOLCHAIN_UPDATE_CHANNEL", "canary");
     let cfg = AppConfig::from_env().expect("load app config");
     assert_eq!(cfg.db_path, db_override);
+    assert_eq!(cfg.onlyoffice_port, 9001);
+    assert_eq!(cfg.app_update_channel, "beta");
+    assert_eq!(cfg.toolchain_update_channel, "canary");
 
     restore_var("WORKDESK_DB_PATH", old_db);
     restore_var("WORKDESK_CORE_BIND", old_bind);
     restore_var("WORKDESK_WORKSPACE_ROOT", old_workspace);
     restore_var("WORKDESK_LOCALE", old_locale);
+    restore_var("WORKDESK_ONLYOFFICE_HOST", old_onlyoffice_host);
+    restore_var("WORKDESK_ONLYOFFICE_PORT", old_onlyoffice_port);
+    restore_var("WORKDESK_SIDECAR_PATH", old_sidecar);
+    restore_var("WORKDESK_TOOLCHAIN_MANIFEST", old_manifest);
+    restore_var("WORKDESK_APP_UPDATE_CHANNEL", old_app_channel);
+    restore_var("WORKDESK_TOOLCHAIN_UPDATE_CHANNEL", old_toolchain_channel);
 }
 
 fn restore_var(key: &str, value: Option<String>) {

@@ -4,7 +4,10 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use workdesk_core::{RunSkillSnapshot, RunStatus, Scope, WorkflowRun, WorkflowRunEvent};
+use workdesk_core::{
+    RunNodeStatus, RunSkillSnapshot, RunStatus, Scope, WorkflowRun, WorkflowRunEvent,
+    WorkflowRunNodeState,
+};
 use workdesk_desktop::automation::{AutomationClient, AutomationServer};
 use workdesk_desktop::command::DesktopCommand;
 use workdesk_desktop::controller::{DesktopApi, DesktopAppController, UiRoute};
@@ -14,6 +17,7 @@ struct FakeDesktopApi {
     runs: Mutex<Vec<WorkflowRun>>,
     events: Mutex<HashMap<String, Vec<WorkflowRunEvent>>>,
     skills: Mutex<HashMap<String, Vec<RunSkillSnapshot>>>,
+    nodes: Mutex<HashMap<String, Vec<WorkflowRunNodeState>>>,
 }
 
 impl FakeDesktopApi {
@@ -50,10 +54,26 @@ impl FakeDesktopApi {
         events.insert("run-1".into(), vec![event]);
         let mut skills = HashMap::new();
         skills.insert("run-1".into(), vec![skill]);
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "run-1".into(),
+            vec![WorkflowRunNodeState {
+                run_id: "run-1".into(),
+                node_id: "n1".into(),
+                kind: workdesk_core::WorkflowNodeKind::ScheduleTrigger,
+                status: RunNodeStatus::Succeeded,
+                attempt: 1,
+                error_message: None,
+                started_at: Some(Utc::now()),
+                finished_at: Some(Utc::now()),
+                updated_at: Utc::now(),
+            }],
+        );
         Self {
             runs: Mutex::new(vec![run]),
             events: Mutex::new(events),
             skills: Mutex::new(skills),
+            nodes: Mutex::new(nodes),
         }
     }
 }
@@ -84,6 +104,16 @@ impl DesktopApi for FakeDesktopApi {
             .skills
             .lock()
             .expect("skills lock")
+            .get(run_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn list_run_nodes(&self, run_id: &str) -> Result<Vec<WorkflowRunNodeState>> {
+        Ok(self
+            .nodes
+            .lock()
+            .expect("nodes lock")
             .get(run_id)
             .cloned()
             .unwrap_or_default())

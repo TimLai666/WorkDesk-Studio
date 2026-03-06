@@ -107,6 +107,7 @@ async fn workflow_run_endpoint_enqueues_run_with_envelope() {
         .to_string();
 
     let run_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -126,4 +127,59 @@ async fn workflow_run_endpoint_enqueues_run_with_envelope() {
     assert!(run_payload["error"].is_null());
     assert_eq!(run_payload["data"]["workflow_id"], workflow_id);
     assert_eq!(run_payload["data"]["status"], "queued");
+
+    let run_id = run_payload["data"]["run_id"]
+        .as_str()
+        .expect("run id")
+        .to_string();
+    let nodes_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/runs/{run_id}/nodes"))
+                .body(Body::empty())
+                .expect("nodes request"),
+        )
+        .await
+        .expect("nodes response");
+    assert_eq!(nodes_response.status(), 200);
+
+    let nodes_body = to_bytes(nodes_response.into_body(), usize::MAX)
+        .await
+        .expect("nodes body");
+    let nodes_payload: Value = serde_json::from_slice(&nodes_body).expect("nodes json");
+    let nodes = nodes_payload["data"].as_array().expect("nodes array");
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["node_id"], "n1");
+    assert_eq!(nodes[0]["status"], "pending");
+}
+
+#[tokio::test]
+async fn onlyoffice_callback_uses_envelope() {
+    let app = setup_router().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/office/onlyoffice/callback")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                      "payload": {
+                        "status": 2,
+                        "url": "https://example.com/file.docx"
+                      }
+                    }"#,
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 200);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let payload: Value = serde_json::from_slice(&bytes).expect("json body");
+    assert_eq!(payload["data"]["accepted"], true);
+    assert!(payload["error"].is_null());
 }
