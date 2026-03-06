@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  workdesk-core:
+    build:
+      context: ..
+      dockerfile: crates/workdesk-core/Dockerfile
+    environment:
+      WORKDESK_CORE_BIND: "0.0.0.0:4000"
+      WORKDESK_WORKSPACE_ROOT: "/var/workdesk/workspace"
+      WORKDESK_DATABASE_URL: "postgres://workdesk:workdesk@postgres:5432/workdesk"
+    ports:
+      - "4000:4000"
+    volumes:
+      - workdesk_workspace:/var/workdesk/workspace
+    depends_on:
+      - postgres
+      - onlyoffice
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: workdesk
+      POSTGRES_USER: workdesk
+      POSTGRES_PASSWORD: workdesk
+    ports:
+      - "5432:5432"
+    volumes:
+      - workdesk_pg:/var/lib/postgresql/data
+
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    environment:
+      JWT_ENABLED: "false"
+    ports:
+      - "8082:80"
+
+volumes:
+  workdesk_workspace:
+  workdesk_pg:
