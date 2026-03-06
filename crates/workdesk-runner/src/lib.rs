@@ -2,8 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::ffi::OsStr;
 use std::path::PathBuf;
+use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use uuid::Uuid;
+use workdesk_core::repository::CoreRepository;
+use workdesk_core::{RunSkillSnapshot, SqliteCoreRepository, WorkflowRun};
 
 pub use workdesk_domain::ExecutionLanguage;
 use workdesk_domain::{AgentEvent, AgentProvider, AgentSession};
@@ -290,4 +294,190 @@ impl AgentProvider for CodexCliAgentProvider {
         self.logout(from_account).await?;
         self.start_session(to_account).await
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct RunnerConfig {
+    pub db_path: PathBuf,
+    pub tools_root: PathBuf,
+    pub runner_id: String,
+    pub poll_interval_ms: u64,
+    pub lease_seconds: i64,
+}
+
+pub struct WorkflowRunnerDaemon {
+    repo: SqliteCoreRepository,
+    manager: ToolchainManager,
+    config: RunnerConfig,
+}
+
+impl WorkflowRunnerDaemon {
+    pub async fn new(config: RunnerConfig) -> Result<Self> {
+        let repo = SqliteCoreRepository::connect(&config.db_path).await?;
+        repo.migrate().await?;
+        Ok(Self {
+            repo,
+            manager: ToolchainManager::new(config.tools_root.clone()),
+            config,
+        })
+    }
+
+    pub async fn run_forever(&self) -> Result<()> {
+        loop {
+            let had_work = self.run_once().await?;
+            if !had_work {
+                tokio::time::sleep(Duration::from_millis(self.config.poll_interval_ms)).await;
+            }
+        }
+    }
+
+    pub async fn run_once(&self) -> Result<bool> {
+        let Some(run) = self
+            .repo
+            .claim_queued_run(&self.config.runner_id, self.config.lease_seconds)
+            .await?
+        else {
+            return Ok(false);
+        };
+
+        if let Err(error) = self.process_run(&run).await {
+            let _ = self
+                .repo
+                .complete_run_failure(&run.run_id, &error.to_string())
+                .await;
+            return Err(error);
+        }
+
+        Ok(true)
+    }
+
+    async fn process_run(&self, run: &WorkflowRun) -> Result<()> {
+        self.repo
+            .append_run_event(
+                &run.run_id,
+                "runner_claimed",
+                &format!("runner {} claimed run", self.config.runner_id),
+            )
+            .await?;
+
+        let snapshots = self.repo.list_run_skill_snapshots(&run.run_id).await?;
+        self.materialize_skills(&run, &snapshots).await?;
+
+        let latest = self
+            .repo
+            .get_run(&run.run_id)
+            .await?
+            .ok_or_else(|| anyhow!("run disappeared after claim: {}", run.run_id))?;
+        if latest.cancel_requested {
+            self.repo
+                .append_run_event(
+                    &run.run_id,
+                    "run_canceled",
+                    "run canceled before node execution started",
+                )
+                .await?;
+            self.repo
+                .complete_run_canceled(&run.run_id, "canceled before execution")
+                .await?;
+            return Ok(());
+        }
+
+        self.repo
+            .append_run_event(
+                &run.run_id,
+                "run_finished",
+                "runner finished placeholder execution path",
+            )
+            .await?;
+        self.repo.complete_run_success(&run.run_id).await?;
+        Ok(())
+    }
+
+    async fn materialize_skills(
+        &self,
+        run: &WorkflowRun,
+        snapshots: &[RunSkillSnapshot],
+    ) -> Result<()> {
+        let skills_root = self
+            .manager
+            .tools_root()
+            .join("workflows")
+            .join(&run.workflow_id)
+            .join("runs")
+            .join(&run.run_id)
+            .join(".workdesk")
+            .join("skills");
+        tokio::fs::create_dir_all(&skills_root).await?;
+
+        let mut index = Vec::with_capacity(snapshots.len());
+        for snapshot in snapshots {
+            let source = PathBuf::from(&snapshot.content_path);
+            let target = skills_root.join(&snapshot.name);
+            copy_path_recursive(&source, &target)
+                .await
+                .with_context(|| format!("materialize skill {} failed", snapshot.name))?;
+            self.repo
+                .update_run_skill_materialized_path(
+                    &run.run_id,
+                    &snapshot.name,
+                    &target.to_string_lossy(),
+                )
+                .await?;
+            index.push(serde_json::json!({
+                "name": snapshot.name,
+                "scope": snapshot.scope,
+                "version": snapshot.version,
+                "manifest": snapshot.manifest,
+                "path": target.to_string_lossy().to_string()
+            }));
+        }
+
+        let index_path = skills_root.join("index.json");
+        let mut file = tokio::fs::File::create(&index_path).await?;
+        file.write_all(serde_json::to_string_pretty(&index)?.as_bytes())
+            .await?;
+        file.flush().await?;
+        self.repo
+            .append_run_event(
+                &run.run_id,
+                "skills_loaded",
+                &format!(
+                    "loaded {} skills, index={}",
+                    snapshots.len(),
+                    index_path.to_string_lossy()
+                ),
+            )
+            .await?;
+        Ok(())
+    }
+}
+
+async fn copy_path_recursive(source: &PathBuf, target: &PathBuf) -> Result<()> {
+    let source = source.clone();
+    let target = target.clone();
+    tokio::task::spawn_blocking(move || copy_path_recursive_sync(&source, &target))
+        .await
+        .context("join skill copy task")??;
+    Ok(())
+}
+
+fn copy_path_recursive_sync(source: &PathBuf, target: &PathBuf) -> Result<()> {
+    let metadata = std::fs::metadata(source)
+        .with_context(|| format!("skill source path not found: {}", source.display()))?;
+    if metadata.is_file() {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(source, target)?;
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let path = entry.path();
+        let nested_target = target.join(entry.file_name());
+        copy_path_recursive_sync(&path, &nested_target)?;
+    }
+    Ok(())
 }

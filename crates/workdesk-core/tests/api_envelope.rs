@@ -71,3 +71,58 @@ async fn not_found_returns_error_envelope() {
     assert!(payload["error"]["message"].is_string());
     assert!(payload["meta"]["request_id"].is_string());
 }
+
+#[tokio::test]
+async fn workflow_run_endpoint_enqueues_run_with_envelope() {
+    let app = setup_router().await;
+
+    let create_workflow = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workflows")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                      "name":"ops",
+                      "timezone":"Asia/Taipei",
+                      "nodes":[{"id":"n1","kind":"schedule_trigger"}],
+                      "edges":[]
+                    }"#,
+                ))
+                .expect("create workflow request"),
+        )
+        .await
+        .expect("create workflow response");
+    assert_eq!(create_workflow.status(), 200);
+
+    let workflow_body =
+        to_bytes(create_workflow.into_body(), usize::MAX).await.expect("workflow body");
+    let workflow_payload: Value = serde_json::from_slice(&workflow_body).expect("workflow json");
+    let workflow_id = workflow_payload["data"]["id"]
+        .as_str()
+        .expect("workflow id")
+        .to_string();
+
+    let run_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/workflows/{workflow_id}/run"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"requested_by":"tester"}"#))
+                .expect("run request"),
+        )
+        .await
+        .expect("run response");
+    assert_eq!(run_response.status(), 200);
+
+    let run_body = to_bytes(run_response.into_body(), usize::MAX)
+        .await
+        .expect("run body");
+    let run_payload: Value = serde_json::from_slice(&run_body).expect("run json");
+    assert!(run_payload["error"].is_null());
+    assert_eq!(run_payload["data"]["workflow_id"], workflow_id);
+    assert_eq!(run_payload["data"]["status"], "queued");
+}

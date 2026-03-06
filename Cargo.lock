@@ -2858,7 +2858,6 @@ dependencies = [
  "tracing",
  "uuid",
  "workdesk-domain",
- "workdesk-runner",
 ]
 
 [[package]]
@@ -2873,6 +2872,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "workdesk-core",
+ "workdesk-runner",
 ]
 
 [[package]]
@@ -2893,10 +2893,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
  "thiserror",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
+ "workdesk-core",
  "workdesk-domain",
 ]
 

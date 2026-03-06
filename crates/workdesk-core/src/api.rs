@@ -3,10 +3,11 @@ use crate::errors::{ApiHttpError, CoreError};
 use crate::repository::SqliteCoreRepository;
 use crate::service::CoreService;
 use crate::types::{
-    ApiEnvelope, ApprovalInput, AuthLoginInput, AuthLogoutInput, AuthSwitchInput,
+    ApiEnvelope, ApprovalInput, AuthLoginInput, AuthLogoutInput, AuthSwitchInput, CancelRunInput,
     CreateProposalInput, CreateWorkflowInput, FsMoveInput, FsQuery, FsReadResponse, FsTreeEntry,
-    FsWriteInput, OfficeOpenInput, OfficeSaveInput, OfficeVersionResponse, RunWorkflowResponse,
-    UpdateWorkflowStatusInput, UpsertMemoryInput, UpsertSkillInput,
+    FsWriteInput, OfficeOpenInput, OfficeSaveInput, OfficeVersionResponse, RetryRunInput,
+    RunEventsQuery, RunListQuery, RunWorkflowInput, UpdateWorkflowStatusInput, UpsertMemoryInput,
+    UpsertSkillInput,
 };
 use anyhow::{Context, Result};
 use axum::extract::{Path, Query, State};
@@ -19,7 +20,6 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Component, PathBuf};
 use std::sync::Arc;
-use uuid::Uuid;
 
 #[derive(Clone)]
 struct ApiState {
@@ -53,6 +53,12 @@ pub fn build_router(service: CoreService) -> Router {
         .route("/api/v1/memory", get(list_memory).post(upsert_memory))
         .route("/api/v1/memory/export", get(export_memory))
         .route("/api/v1/memory/import", post(import_memory))
+        .route("/api/v1/runs", get(list_runs))
+        .route("/api/v1/runs/{run_id}", get(get_run))
+        .route("/api/v1/runs/{run_id}/events", get(list_run_events))
+        .route("/api/v1/runs/{run_id}/skills", get(list_run_skills))
+        .route("/api/v1/runs/{run_id}/cancel", post(cancel_run))
+        .route("/api/v1/runs/{run_id}/retry", post(retry_run))
         .route("/api/v1/fs/tree", get(fs_tree))
         .route("/api/v1/fs/file", get(fs_read).put(fs_write))
         .route("/api/v1/fs/move", post(fs_move))
@@ -177,17 +183,14 @@ async fn update_workflow_status(
 async fn run_workflow(
     Path(workflow_id): Path<String>,
     State(state): State<ApiState>,
-) -> Result<Json<ApiEnvelope<RunWorkflowResponse>>, ApiHttpError> {
-    state
+    Json(input): Json<RunWorkflowInput>,
+) -> Result<Json<ApiEnvelope<crate::types::WorkflowRun>>, ApiHttpError> {
+    let run = state
         .service
-        .get_workflow(&workflow_id)
+        .queue_workflow_run(&workflow_id, input.requested_by.as_deref())
         .await
         .map_err(ApiHttpError::from)?;
-    Ok(ok(RunWorkflowResponse {
-        run_id: Uuid::new_v4().to_string(),
-        workflow_id,
-        status: "queued".to_string(),
-    }))
+    Ok(ok(run))
 }
 
 async fn create_proposal(
@@ -441,6 +444,85 @@ async fn office_versions(
         path: query.path,
         versions,
     }))
+}
+
+async fn list_runs(
+    State(state): State<ApiState>,
+    Query(query): Query<RunListQuery>,
+) -> Result<Json<ApiEnvelope<Vec<crate::types::WorkflowRun>>>, ApiHttpError> {
+    let runs = state
+        .service
+        .list_runs(query.limit.unwrap_or(50).clamp(1, 500))
+        .await
+        .map_err(ApiHttpError::from)?;
+    Ok(ok(runs))
+}
+
+async fn get_run(
+    Path(run_id): Path<String>,
+    State(state): State<ApiState>,
+) -> Result<Json<ApiEnvelope<crate::types::WorkflowRun>>, ApiHttpError> {
+    let run = state
+        .service
+        .get_run(&run_id)
+        .await
+        .map_err(ApiHttpError::from)?;
+    Ok(ok(run))
+}
+
+async fn list_run_events(
+    Path(run_id): Path<String>,
+    State(state): State<ApiState>,
+    Query(query): Query<RunEventsQuery>,
+) -> Result<Json<ApiEnvelope<Vec<crate::types::WorkflowRunEvent>>>, ApiHttpError> {
+    let events = state
+        .service
+        .list_run_events(
+            &run_id,
+            query.after_seq.unwrap_or(0),
+            query.limit.unwrap_or(200).clamp(1, 2000),
+        )
+        .await
+        .map_err(ApiHttpError::from)?;
+    Ok(ok(events))
+}
+
+async fn list_run_skills(
+    Path(run_id): Path<String>,
+    State(state): State<ApiState>,
+) -> Result<Json<ApiEnvelope<Vec<crate::types::RunSkillSnapshot>>>, ApiHttpError> {
+    let skills = state
+        .service
+        .list_run_skills(&run_id)
+        .await
+        .map_err(ApiHttpError::from)?;
+    Ok(ok(skills))
+}
+
+async fn cancel_run(
+    Path(run_id): Path<String>,
+    State(state): State<ApiState>,
+    Json(_input): Json<CancelRunInput>,
+) -> Result<Json<ApiEnvelope<crate::types::WorkflowRun>>, ApiHttpError> {
+    let run = state
+        .service
+        .cancel_run(&run_id)
+        .await
+        .map_err(ApiHttpError::from)?;
+    Ok(ok(run))
+}
+
+async fn retry_run(
+    Path(run_id): Path<String>,
+    State(state): State<ApiState>,
+    Json(input): Json<RetryRunInput>,
+) -> Result<Json<ApiEnvelope<crate::types::WorkflowRun>>, ApiHttpError> {
+    let run = state
+        .service
+        .retry_run(&run_id, input.requested_by.as_deref())
+        .await
+        .map_err(ApiHttpError::from)?;
+    Ok(ok(run))
 }
 
 fn resolve_workspace_path(

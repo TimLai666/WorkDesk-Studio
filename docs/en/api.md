@@ -42,6 +42,8 @@ Failure:
 - `AUTH_ACCOUNT_NOT_FOUND`
 - `WORKFLOW_NOT_FOUND`
 - `PROPOSAL_NOT_FOUND`
+- `RUN_NOT_FOUND`
+- `RUN_NOT_CANCELABLE`
 - `VALIDATION_FAILED`
 - `FS_PATH_TRAVERSAL`
 - `BAD_REQUEST`
@@ -65,9 +67,18 @@ Failure:
 - `POST /workflows`
 - `GET /workflows/{id}`
 - `PATCH /workflows/{id}/status`
-- `POST /workflows/{id}/run`
+- `POST /workflows/{id}/run` (enqueue run + build skill snapshots)
 - `POST /workflows/{id}/proposals`
 - `POST /workflows/{id}/proposals/{proposal_id}/approve`
+
+### Runs
+
+- `GET /runs?limit=<n>`
+- `GET /runs/{run_id}`
+- `GET /runs/{run_id}/events?after_seq=<n>&limit=<n>`
+- `GET /runs/{run_id}/skills`
+- `POST /runs/{run_id}/cancel`
+- `POST /runs/{run_id}/retry`
 
 ### Skills
 

@@ -3,11 +3,12 @@ mod api_client;
 use anyhow::Result;
 use serde::Deserialize;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::path::PathBuf;
 use tracing::info;
 use tracing::warn;
-use workdesk_core::run_server;
-use workdesk_core::AuthLoginInput;
+use workdesk_core::{run_server, AppConfig, AuthLoginInput};
+use workdesk_runner::{RunnerConfig, WorkflowRunnerDaemon};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DesktopMode {
@@ -41,8 +42,33 @@ async fn main() -> Result<()> {
                 .parse::<SocketAddr>()?;
             let workspace_root =
                 std::env::var("WORKDESK_WORKSPACE_ROOT").unwrap_or_else(|_| ".".into());
+            let app_config = AppConfig::from_env()?;
+            let tools_root = std::env::var("WORKDESK_TOOLS_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| default_tools_root());
+            if !Path::new(&workspace_root).exists() {
+                tokio::fs::create_dir_all(&workspace_root).await?;
+            }
+            let runner = WorkflowRunnerDaemon::new(RunnerConfig {
+                db_path: app_config.db_path.clone(),
+                tools_root,
+                runner_id: std::env::var("WORKDESK_RUNNER_ID")
+                    .unwrap_or_else(|_| "desktop-runner".into()),
+                poll_interval_ms: std::env::var("WORKDESK_RUNNER_POLL_MS")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(1500),
+                lease_seconds: std::env::var("WORKDESK_RUNNER_LEASE_SEC")
+                    .ok()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(30),
+            })
+            .await?;
             info!("{}", bundle.mode_local);
-            run_server(bind, PathBuf::from(workspace_root)).await?;
+            tokio::try_join!(
+                run_server(bind, PathBuf::from(workspace_root)),
+                runner.run_forever()
+            )?;
         }
         DesktopMode::Remote => {
             let remote = std::env::var("WORKDESK_REMOTE_URL")
@@ -91,4 +117,19 @@ fn load_locale_bundle(locale: &str) -> Result<LocaleBundle> {
         _ => include_str!("../resources/i18n/zh-TW.json"),
     };
     Ok(serde_json::from_str(file)?)
+}
+
+fn default_tools_root() -> PathBuf {
+    if cfg!(windows) {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(local).join("WorkDeskStudio").join("tools");
+        }
+    }
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".local")
+        .join("share")
+        .join("WorkDeskStudio")
+        .join("tools")
 }

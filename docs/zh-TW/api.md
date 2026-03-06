@@ -4,7 +4,7 @@ Base path: `/api/v1`
 
 ## Envelope
 
-所有回應都使用同一個 JSON envelope。
+所有回應統一使用 JSON envelope。
 
 成功：
 
@@ -36,12 +36,14 @@ Base path: `/api/v1`
 }
 ```
 
-## 錯誤碼（已固定）
+## 錯誤碼（固定）
 
 - `AUTH_INVALID_CREDENTIALS`
 - `AUTH_ACCOUNT_NOT_FOUND`
 - `WORKFLOW_NOT_FOUND`
 - `PROPOSAL_NOT_FOUND`
+- `RUN_NOT_FOUND`
+- `RUN_NOT_CANCELABLE`
 - `VALIDATION_FAILED`
 - `FS_PATH_TRAVERSAL`
 - `BAD_REQUEST`
@@ -65,9 +67,18 @@ Base path: `/api/v1`
 - `POST /workflows`
 - `GET /workflows/{id}`
 - `PATCH /workflows/{id}/status`
-- `POST /workflows/{id}/run`
+- `POST /workflows/{id}/run`（入列 run + 建立 skills snapshot）
 - `POST /workflows/{id}/proposals`
 - `POST /workflows/{id}/proposals/{proposal_id}/approve`
+
+### Runs
+
+- `GET /runs?limit=<n>`
+- `GET /runs/{run_id}`
+- `GET /runs/{run_id}/events?after_seq=<n>&limit=<n>`
+- `GET /runs/{run_id}/skills`
+- `POST /runs/{run_id}/cancel`
+- `POST /runs/{run_id}/retry`
 
 ### Skills
 

@@ -9,6 +9,8 @@ pub const AUTH_INVALID_CREDENTIALS: &str = "AUTH_INVALID_CREDENTIALS";
 pub const AUTH_ACCOUNT_NOT_FOUND: &str = "AUTH_ACCOUNT_NOT_FOUND";
 pub const WORKFLOW_NOT_FOUND: &str = "WORKFLOW_NOT_FOUND";
 pub const PROPOSAL_NOT_FOUND: &str = "PROPOSAL_NOT_FOUND";
+pub const RUN_NOT_FOUND: &str = "RUN_NOT_FOUND";
+pub const RUN_NOT_CANCELABLE: &str = "RUN_NOT_CANCELABLE";
 pub const VALIDATION_FAILED: &str = "VALIDATION_FAILED";
 pub const FS_PATH_TRAVERSAL: &str = "FS_PATH_TRAVERSAL";
 pub const BAD_REQUEST: &str = "BAD_REQUEST";
@@ -58,6 +60,10 @@ pub enum CoreError {
     WorkflowNotFound,
     #[error("proposal not found")]
     ProposalNotFound,
+    #[error("run not found")]
+    RunNotFound,
+    #[error("run is not cancelable in current state")]
+    RunNotCancelable,
     #[error("proposal must be pending")]
     ProposalNotPending,
     #[error("validation failed: {0}")]
@@ -88,6 +94,12 @@ impl From<CoreError> for ApiHttpError {
             }
             CoreError::ProposalNotFound => {
                 ApiHttpError::new(StatusCode::NOT_FOUND, PROPOSAL_NOT_FOUND, value.to_string())
+            }
+            CoreError::RunNotFound => {
+                ApiHttpError::new(StatusCode::NOT_FOUND, RUN_NOT_FOUND, value.to_string())
+            }
+            CoreError::RunNotCancelable => {
+                ApiHttpError::new(StatusCode::CONFLICT, RUN_NOT_CANCELABLE, value.to_string())
             }
             CoreError::ProposalNotPending => {
                 ApiHttpError::new(StatusCode::CONFLICT, VALIDATION_FAILED, value.to_string())

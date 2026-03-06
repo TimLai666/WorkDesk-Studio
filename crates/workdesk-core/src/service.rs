@@ -2,8 +2,9 @@ use crate::errors::CoreError;
 use crate::repository::CoreRepository;
 use crate::types::{
     ApprovalState, AuthLoginInput, AuthSessionResponse, AuthSwitchInput, CreateProposalInput,
-    CreateWorkflowInput, MemoryRecord, SkillRecord, UpsertMemoryInput, UpsertSkillInput,
-    WorkflowChangeProposal, WorkflowDefinition, WorkflowNode, WorkflowStatus,
+    CreateWorkflowInput, MemoryRecord, RunSkillSnapshot, SkillRecord, UpsertMemoryInput,
+    UpsertSkillInput, WorkflowChangeProposal, WorkflowDefinition, WorkflowNode, WorkflowRun,
+    WorkflowRunEvent, WorkflowStatus,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -234,5 +235,112 @@ impl CoreService {
             .list_memory()
             .await
             .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn queue_workflow_run(
+        &self,
+        workflow_id: &str,
+        requested_by: Option<&str>,
+    ) -> std::result::Result<WorkflowRun, CoreError> {
+        let _ = self.get_workflow(workflow_id).await?;
+        let run = self
+            .repo
+            .create_run(workflow_id, requested_by)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.repo
+            .create_run_skill_snapshots(&run.run_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.repo
+            .append_run_event(&run.run_id, "run_queued", "workflow run queued")
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.repo
+            .get_run(&run.run_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or(CoreError::RunNotFound)
+    }
+
+    pub async fn list_runs(
+        &self,
+        limit: usize,
+    ) -> std::result::Result<Vec<WorkflowRun>, CoreError> {
+        self.repo
+            .list_runs(limit)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn get_run(&self, run_id: &str) -> std::result::Result<WorkflowRun, CoreError> {
+        self.repo
+            .get_run(run_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or(CoreError::RunNotFound)
+    }
+
+    pub async fn list_run_events(
+        &self,
+        run_id: &str,
+        after_seq: i64,
+        limit: usize,
+    ) -> std::result::Result<Vec<WorkflowRunEvent>, CoreError> {
+        let _ = self.get_run(run_id).await?;
+        self.repo
+            .list_run_events(run_id, after_seq, limit)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn list_run_skills(
+        &self,
+        run_id: &str,
+    ) -> std::result::Result<Vec<RunSkillSnapshot>, CoreError> {
+        let _ = self.get_run(run_id).await?;
+        self.repo
+            .list_run_skill_snapshots(run_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn cancel_run(&self, run_id: &str) -> std::result::Result<WorkflowRun, CoreError> {
+        let run = self
+            .repo
+            .request_cancel_run(run_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or(CoreError::RunNotFound)?;
+        if !run.cancel_requested {
+            return Err(CoreError::RunNotCancelable);
+        }
+        self.repo
+            .append_run_event(run_id, "cancel_requested", "cancel requested by operator")
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.get_run(run_id).await
+    }
+
+    pub async fn retry_run(
+        &self,
+        run_id: &str,
+        requested_by: Option<&str>,
+    ) -> std::result::Result<WorkflowRun, CoreError> {
+        let run = self
+            .repo
+            .retry_run(run_id, requested_by)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or(CoreError::RunNotFound)?;
+        self.repo
+            .create_run_skill_snapshots(&run.run_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.repo
+            .append_run_event(&run.run_id, "run_queued", "workflow run retried")
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.get_run(&run.run_id).await
     }
 }

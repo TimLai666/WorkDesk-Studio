@@ -132,6 +132,76 @@ pub struct RunWorkflowResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunWorkflowInput {
+    pub requested_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CancelRunInput {
+    pub requested_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Canceled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRun {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub requested_by: Option<String>,
+    pub status: RunStatus,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub cancel_requested: bool,
+    pub error_message: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRunEvent {
+    pub run_id: String,
+    pub seq: i64,
+    pub event_type: String,
+    pub payload: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunSkillSnapshot {
+    pub run_id: String,
+    pub scope: Scope,
+    pub name: String,
+    pub manifest: String,
+    pub content_path: String,
+    pub version: String,
+    pub materialized_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunListQuery {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunEventsQuery {
+    pub after_seq: Option<i64>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryRunInput {
+    pub requested_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiEnvelope<T> {
     pub data: Option<T>,
     pub error: Option<ApiErrorPayload>,
@@ -258,4 +328,25 @@ pub fn scope_from_db(value: &str) -> anyhow::Result<Scope> {
 
 pub fn parse_rfc3339_utc(value: &str) -> anyhow::Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
+}
+
+pub fn run_status_to_db(status: &RunStatus) -> &'static str {
+    match status {
+        RunStatus::Queued => "queued",
+        RunStatus::Running => "running",
+        RunStatus::Succeeded => "succeeded",
+        RunStatus::Failed => "failed",
+        RunStatus::Canceled => "canceled",
+    }
+}
+
+pub fn run_status_from_db(value: &str) -> anyhow::Result<RunStatus> {
+    match value {
+        "queued" => Ok(RunStatus::Queued),
+        "running" => Ok(RunStatus::Running),
+        "succeeded" => Ok(RunStatus::Succeeded),
+        "failed" => Ok(RunStatus::Failed),
+        "canceled" => Ok(RunStatus::Canceled),
+        other => Err(anyhow::anyhow!("unknown run status: {other}")),
+    }
 }

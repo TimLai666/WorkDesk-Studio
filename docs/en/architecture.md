@@ -2,9 +2,9 @@
 
 ## Runtime Topology
 
-- `apps/workdesk-desktop`: desktop shell. Local mode starts embedded core; remote mode connects to a server core.
-- `crates/workdesk-core`: HTTP API for auth, workflows, proposals, skills, memory, filesystem, and office endpoints.
-- `crates/workdesk-runner`: execution/toolchain layer for code node runtime and Codex adapters.
+- `apps/workdesk-desktop`: desktop shell. Local mode starts core + runner loops in the same app process; remote mode connects to a server core.
+- `crates/workdesk-core`: HTTP API for auth, workflows, proposals, skills, memory, run queue, filesystem, and office endpoints.
+- `crates/workdesk-runner`: workflow runner daemon. Claims queued runs, materializes skill snapshots, writes run events/status.
 
 ## Persistence Strategy (Current Milestone)
 
@@ -24,6 +24,7 @@
 - Auth: `users`, `sessions`
 - Workflow: `workflows`, `workflow_nodes`, `workflow_edges`, `workflow_proposals`
 - Knowledge: `skills`, `memory_records`
+- Run queue: `workflow_runs`, `workflow_run_events`, `workflow_run_skill_snapshots`, `runner_leases`
 - Office history: `office_versions`
 
 Scope boundaries:
@@ -47,3 +48,12 @@ Scope boundaries:
   - Failure: `{ "data": null, "error": { "code": "...", "message": "...", "details": ... }, "meta": {...} }`
 - Route paths remain unchanged from previous scaffold.
 - Desktop API client uses one shared envelope decoder and one error-handling path.
+
+## Run + Skills Snapshot Flow
+
+1. `POST /workflows/{id}/run` enqueues a run in `workflow_runs`.
+2. Core creates a run-time skill snapshot from `skills`:
+   - merges `shared + user`
+   - same skill name uses `user` scope as winner
+3. Runner claims queued runs and materializes snapshot content into run runtime folder.
+4. Runner records `skills_loaded` and completion events in `workflow_run_events`.

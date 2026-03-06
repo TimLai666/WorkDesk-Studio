@@ -16,3 +16,6 @@ tracing-subscriber.workspace = true
 
 [dependencies.workdesk-core]
 path = "../../crates/workdesk-core"
+
+[dependencies.workdesk-runner]
+path = "../../crates/workdesk-runner"
