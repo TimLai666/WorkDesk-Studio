@@ -1,10 +1,13 @@
+mod workbench;
+
 use crate::types::{
     approval_state_from_db, approval_state_to_db, parse_rfc3339_utc, run_node_status_from_db,
     run_node_status_to_db, run_status_from_db, run_status_to_db, scope_from_db, scope_to_db,
     workflow_kind_from_db, workflow_kind_to_db, workflow_status_from_db, workflow_status_to_db,
-    AuthSessionResponse, MemoryRecord, RunNodeStatus, RunSkillSnapshot, RunStatus, SkillRecord,
-    WorkflowChangeProposal, WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowRun,
-    WorkflowRunEvent, WorkflowRunNodeState,
+    AgentWorkspaceMessage, AgentWorkspaceSession, AuthSessionResponse, ChoicePrompt, MemoryRecord,
+    RunNodeStatus, RunSkillSnapshot, RunStatus, SkillRecord, WorkflowChangeProposal,
+    WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowRun, WorkflowRunEvent,
+    WorkflowRunNodeState,
 };
 use anyhow::{anyhow, Context, Result};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -110,6 +113,27 @@ pub trait CoreRepository: Send + Sync {
     async fn complete_run_success(&self, run_id: &str) -> Result<()>;
     async fn complete_run_failure(&self, run_id: &str, error_message: &str) -> Result<()>;
     async fn complete_run_canceled(&self, run_id: &str, reason: &str) -> Result<()>;
+
+    async fn create_agent_workspace_session(&self, session: &AgentWorkspaceSession) -> Result<()>;
+    async fn list_agent_workspace_sessions(&self) -> Result<Vec<AgentWorkspaceSession>>;
+    async fn get_agent_workspace_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<AgentWorkspaceSession>>;
+    async fn update_agent_workspace_session(&self, session: &AgentWorkspaceSession) -> Result<()>;
+    async fn append_agent_workspace_message(&self, message: &AgentWorkspaceMessage) -> Result<()>;
+    async fn list_agent_workspace_messages(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<AgentWorkspaceMessage>>;
+    async fn create_choice_prompt(&self, prompt: &ChoicePrompt) -> Result<()>;
+    async fn list_choice_prompts(&self, session_id: &str) -> Result<Vec<ChoicePrompt>>;
+    async fn get_choice_prompt(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+    ) -> Result<Option<ChoicePrompt>>;
+    async fn update_choice_prompt(&self, prompt: &ChoicePrompt) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -142,8 +166,9 @@ impl SqliteCoreRepository {
     }
 
     async fn load_workflow_by_id(&self, workflow_id: &str) -> Result<Option<WorkflowDefinition>> {
-        let row =
-            sqlx::query("SELECT id, name, timezone, version, status FROM workflows WHERE id = ?")
+        let row = sqlx::query(
+            "SELECT id, name, timezone, version, status, agent_defaults_json FROM workflows WHERE id = ?",
+        )
                 .bind(workflow_id)
                 .fetch_optional(&self.pool)
                 .await?;
@@ -163,18 +188,26 @@ impl SqliteCoreRepository {
         let timezone: String = row.try_get("timezone")?;
         let version: i64 = row.try_get("version")?;
         let status: String = row.try_get("status")?;
+        let agent_defaults_json: Option<String> = row.try_get("agent_defaults_json")?;
 
-        let node_rows =
-            sqlx::query("SELECT id, kind FROM workflow_nodes WHERE workflow_id = ? ORDER BY id")
-                .bind(&workflow_id)
-                .fetch_all(&self.pool)
-                .await?;
+        let node_rows = sqlx::query(
+            "SELECT id, kind, x, y, config_json FROM workflow_nodes WHERE workflow_id = ? ORDER BY id",
+        )
+        .bind(&workflow_id)
+        .fetch_all(&self.pool)
+        .await?;
         let nodes = node_rows
             .into_iter()
             .map(|node| {
+                let config_json: Option<String> = node.try_get("config_json")?;
                 Ok(WorkflowNode {
                     id: node.try_get("id")?,
                     kind: workflow_kind_from_db(&node.try_get::<String, _>("kind")?)?,
+                    x: node.try_get("x")?,
+                    y: node.try_get("y")?,
+                    config: config_json
+                        .map(|value| serde_json::from_str(&value))
+                        .transpose()?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -203,6 +236,9 @@ impl SqliteCoreRepository {
             edges,
             version: version as u64,
             status: workflow_status_from_db(&status)?,
+            agent_defaults: agent_defaults_json
+                .map(|value| serde_json::from_str(&value))
+                .transpose()?,
         })
     }
 
@@ -316,24 +352,36 @@ impl CoreRepository for SqliteCoreRepository {
         let mut tx = self.pool.begin().await?;
         let now = Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT INTO workflows (id, name, timezone, version, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO workflows (id, name, timezone, version, status, agent_defaults_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&workflow.id)
         .bind(&workflow.name)
         .bind(&workflow.timezone)
         .bind(workflow.version as i64)
         .bind(workflow_status_to_db(&workflow.status))
+        .bind(
+            workflow
+                .agent_defaults
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+        )
         .bind(&now)
         .bind(&now)
         .execute(&mut *tx)
         .await?;
 
         for node in &workflow.nodes {
-            sqlx::query("INSERT INTO workflow_nodes (workflow_id, id, kind) VALUES (?, ?, ?)")
+            sqlx::query(
+                "INSERT INTO workflow_nodes (workflow_id, id, kind, x, y, config_json) VALUES (?, ?, ?, ?, ?, ?)",
+            )
                 .bind(&workflow.id)
                 .bind(&node.id)
                 .bind(workflow_kind_to_db(&node.kind))
+                .bind(node.x)
+                .bind(node.y)
+                .bind(node.config.as_ref().map(serde_json::to_string).transpose()?)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -355,7 +403,7 @@ impl CoreRepository for SqliteCoreRepository {
 
     async fn list_workflows(&self) -> Result<Vec<WorkflowDefinition>> {
         let rows = sqlx::query(
-            "SELECT id, name, timezone, version, status FROM workflows ORDER BY updated_at DESC",
+            "SELECT id, name, timezone, version, status, agent_defaults_json FROM workflows ORDER BY updated_at DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1009,5 +1057,55 @@ impl CoreRepository for SqliteCoreRepository {
             .await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    async fn create_agent_workspace_session(&self, session: &AgentWorkspaceSession) -> Result<()> {
+        self.create_agent_workspace_session_impl(session).await
+    }
+
+    async fn list_agent_workspace_sessions(&self) -> Result<Vec<AgentWorkspaceSession>> {
+        self.list_agent_workspace_sessions_impl().await
+    }
+
+    async fn get_agent_workspace_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<AgentWorkspaceSession>> {
+        self.get_agent_workspace_session_impl(session_id).await
+    }
+
+    async fn update_agent_workspace_session(&self, session: &AgentWorkspaceSession) -> Result<()> {
+        self.update_agent_workspace_session_impl(session).await
+    }
+
+    async fn append_agent_workspace_message(&self, message: &AgentWorkspaceMessage) -> Result<()> {
+        self.append_agent_workspace_message_impl(message).await
+    }
+
+    async fn list_agent_workspace_messages(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<AgentWorkspaceMessage>> {
+        self.list_agent_workspace_messages_impl(session_id).await
+    }
+
+    async fn create_choice_prompt(&self, prompt: &ChoicePrompt) -> Result<()> {
+        self.create_choice_prompt_impl(prompt).await
+    }
+
+    async fn list_choice_prompts(&self, session_id: &str) -> Result<Vec<ChoicePrompt>> {
+        self.list_choice_prompts_impl(session_id).await
+    }
+
+    async fn get_choice_prompt(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+    ) -> Result<Option<ChoicePrompt>> {
+        self.get_choice_prompt_impl(session_id, prompt_id).await
+    }
+
+    async fn update_choice_prompt(&self, prompt: &ChoicePrompt) -> Result<()> {
+        self.update_choice_prompt_impl(prompt).await
     }
 }

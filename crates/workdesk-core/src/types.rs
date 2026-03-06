@@ -3,20 +3,31 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 pub use workdesk_domain::{
-    ApprovalState, MemoryRecord, Scope, SkillRecord, WorkflowChangeProposal, WorkflowDefinition,
-    WorkflowEdge, WorkflowNode, WorkflowNodeKind, WorkflowStatus,
+    AgentWorkspaceMessage, AgentWorkspaceMessageRole, AgentWorkspaceSession, ApprovalState,
+    ChoicePrompt, ChoicePromptOption, ChoicePromptStatus, CodexModelCapability,
+    CodexNativeSessionConfig, CodexReasoningEffortOption, MemoryRecord, Scope, SkillRecord,
+    WorkflowAgentDefaults, WorkflowChangeProposal, WorkflowDefinition, WorkflowEdge, WorkflowNode,
+    WorkflowNodeKind, WorkflowStatus,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowNodeInput {
     pub id: String,
     pub kind: WorkflowNodeKind,
+    #[serde(default)]
+    pub x: Option<f32>,
+    #[serde(default)]
+    pub y: Option<f32>,
+    #[serde(default)]
+    pub config: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWorkflowInput {
     pub name: String,
     pub timezone: String,
+    #[serde(default)]
+    pub agent_defaults: Option<WorkflowAgentDefaults>,
     pub nodes: Vec<WorkflowNodeInput>,
     pub edges: Vec<WorkflowEdge>,
 }
@@ -58,6 +69,60 @@ pub struct AuthSwitchInput {
 pub struct AuthSessionResponse {
     pub session_token: String,
     pub account_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAgentWorkspaceSessionInput {
+    pub title: String,
+    #[serde(default)]
+    pub config: Option<CodexNativeSessionConfig>,
+    #[serde(default)]
+    pub last_active_panel: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAgentWorkspaceSessionConfigInput {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub model_reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub speed: Option<bool>,
+    #[serde(default)]
+    pub plan_mode: Option<bool>,
+    #[serde(default)]
+    pub last_active_panel: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppendAgentWorkspaceMessageInput {
+    pub role: AgentWorkspaceMessageRole,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChoicePromptOptionInput {
+    pub option_id: String,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateChoicePromptInput {
+    pub question: String,
+    pub options: Vec<ChoicePromptOptionInput>,
+    #[serde(default)]
+    pub recommended_option_id: Option<String>,
+    #[serde(default)]
+    pub allow_freeform: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChoicePromptAnswerInput {
+    #[serde(default)]
+    pub selected_option_id: Option<String>,
+    #[serde(default)]
+    pub freeform_answer: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

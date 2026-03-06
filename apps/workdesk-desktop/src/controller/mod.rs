@@ -1,4 +1,9 @@
-﻿
+mod state;
+
+pub use state::{
+    reduce_ui_state, CanvasNodeState, ControllerAction, UiDiagnostic, UiRoute, UiStateSnapshot,
+};
+
 use crate::api_client::ApiClient;
 use crate::command::DesktopCommand;
 use crate::command_bus::CommandDispatcher;
@@ -7,208 +12,14 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use workdesk_core::{
-    FsDiffResponse, FsSearchMatch, FsTreeEntry, PdfOperationResponse, RunSkillSnapshot,
-    TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowEdge, WorkflowNodeKind,
-    WorkflowRun, WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
+    AgentWorkspaceMessage, AgentWorkspaceSession, ChoicePrompt, CodexModelCapability,
+    CodexNativeSessionConfig, FsDiffResponse, FsSearchMatch, FsTreeEntry, RunSkillSnapshot,
+    TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowEdge,
+    WorkflowNodeKind, WorkflowRun, WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum UiRoute {
-    RunList,
-    RunDetail,
-    WorkflowDetail,
-    FileManager,
-    OfficeDesk,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct UiDiagnostic {
-    pub code: String,
-    pub message: String,
-    pub run_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CanvasNodeState {
-    pub id: String,
-    pub kind: WorkflowNodeKind,
-    pub x: f32,
-    pub y: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiStateSnapshot {
-    pub revision: u64,
-    pub focus_seq: u64,
-    pub route: UiRoute,
-    pub selected_run_id: Option<String>,
-    pub selected_workflow_id: Option<String>,
-    pub workflows: Vec<WorkflowDefinition>,
-    pub runs: Vec<WorkflowRun>,
-    pub run_events: Vec<WorkflowRunEvent>,
-    pub run_nodes: Vec<WorkflowRunNodeState>,
-    pub run_skills: Vec<RunSkillSnapshot>,
-    pub canvas_nodes: Vec<CanvasNodeState>,
-    pub canvas_edges: Vec<WorkflowEdge>,
-    pub selected_canvas_nodes: Vec<String>,
-    pub canvas_undo_depth: usize,
-    pub canvas_redo_depth: usize,
-    pub workspace_entries: Vec<FsTreeEntry>,
-    pub current_file_path: Option<String>,
-    pub current_file_content: String,
-    pub file_search_results: Vec<FsSearchMatch>,
-    pub diff_result: Option<FsDiffResponse>,
-    pub terminal_session: Option<TerminalSessionResponse>,
-    pub office_path: Option<String>,
-    pub office_content_base64: Option<String>,
-    pub office_editor_text: String,
-    pub office_versions: Vec<String>,
-    pub pdf_last_operation: Option<PdfOperationResponse>,
-    pub diagnostics: Vec<UiDiagnostic>,
-    pub last_error: Option<String>,
-}
-
-impl Default for UiStateSnapshot {
-    fn default() -> Self {
-        Self {
-            revision: 0,
-            focus_seq: 0,
-            route: UiRoute::RunList,
-            selected_run_id: None,
-            selected_workflow_id: None,
-            workflows: Vec::new(),
-            runs: Vec::new(),
-            run_events: Vec::new(),
-            run_nodes: Vec::new(),
-            run_skills: Vec::new(),
-            canvas_nodes: Vec::new(),
-            canvas_edges: Vec::new(),
-            selected_canvas_nodes: Vec::new(),
-            canvas_undo_depth: 0,
-            canvas_redo_depth: 0,
-            workspace_entries: Vec::new(),
-            current_file_path: None,
-            current_file_content: String::new(),
-            file_search_results: Vec::new(),
-            diff_result: None,
-            terminal_session: None,
-            office_path: None,
-            office_content_base64: None,
-            office_editor_text: String::new(),
-            office_versions: Vec::new(),
-            pdf_last_operation: None,
-            diagnostics: Vec::new(),
-            last_error: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ControllerAction {
-    FocusWindow,
-    SetRoute(UiRoute),
-    SelectRun(Option<String>),
-    SelectWorkflow(Option<String>),
-    SetRuns(Vec<WorkflowRun>),
-    SetRunDetails {
-        events: Vec<WorkflowRunEvent>,
-        nodes: Vec<WorkflowRunNodeState>,
-        skills: Vec<RunSkillSnapshot>,
-    },
-    SetWorkflows(Vec<WorkflowDefinition>),
-    SetCanvas {
-        nodes: Vec<CanvasNodeState>,
-        edges: Vec<WorkflowEdge>,
-        selected: Vec<String>,
-    },
-    SetCanvasHistoryDepth {
-        undo_depth: usize,
-        redo_depth: usize,
-    },
-    SetWorkspaceEntries(Vec<FsTreeEntry>),
-    SetCurrentFile {
-        path: Option<String>,
-        content: String,
-    },
-    SetFileSearchResults(Vec<FsSearchMatch>),
-    SetDiffResult(Option<FsDiffResponse>),
-    SetTerminalSession(Option<TerminalSessionResponse>),
-    SetOffice {
-        path: Option<String>,
-        content_base64: Option<String>,
-        editor_text: String,
-        versions: Vec<String>,
-        pdf_last_operation: Option<PdfOperationResponse>,
-    },
-    SetDiagnostics(Vec<UiDiagnostic>),
-    SetError(Option<String>),
-}
-
-pub fn reduce_ui_state(state: &mut UiStateSnapshot, action: ControllerAction) {
-    match action {
-        ControllerAction::FocusWindow => state.focus_seq += 1,
-        ControllerAction::SetRoute(route) => state.route = route,
-        ControllerAction::SelectRun(run_id) => state.selected_run_id = run_id,
-        ControllerAction::SelectWorkflow(workflow_id) => state.selected_workflow_id = workflow_id,
-        ControllerAction::SetRuns(runs) => state.runs = runs,
-        ControllerAction::SetRunDetails {
-            events,
-            nodes,
-            skills,
-        } => {
-            state.run_events = events;
-            state.run_nodes = nodes;
-            state.run_skills = skills;
-        }
-        ControllerAction::SetWorkflows(workflows) => state.workflows = workflows,
-        ControllerAction::SetCanvas {
-            nodes,
-            edges,
-            selected,
-        } => {
-            state.canvas_nodes = nodes;
-            state.canvas_edges = edges;
-            state.selected_canvas_nodes = selected;
-        }
-        ControllerAction::SetCanvasHistoryDepth {
-            undo_depth,
-            redo_depth,
-        } => {
-            state.canvas_undo_depth = undo_depth;
-            state.canvas_redo_depth = redo_depth;
-        }
-        ControllerAction::SetWorkspaceEntries(entries) => state.workspace_entries = entries,
-        ControllerAction::SetCurrentFile { path, content } => {
-            state.current_file_path = path;
-            state.current_file_content = content;
-        }
-        ControllerAction::SetFileSearchResults(results) => state.file_search_results = results,
-        ControllerAction::SetDiffResult(diff) => state.diff_result = diff,
-        ControllerAction::SetTerminalSession(session) => state.terminal_session = session,
-        ControllerAction::SetOffice {
-            path,
-            content_base64,
-            editor_text,
-            versions,
-            pdf_last_operation,
-        } => {
-            state.office_path = path;
-            state.office_content_base64 = content_base64;
-            state.office_editor_text = editor_text;
-            state.office_versions = versions;
-            state.pdf_last_operation = pdf_last_operation;
-        }
-        ControllerAction::SetDiagnostics(diagnostics) => state.diagnostics = diagnostics,
-        ControllerAction::SetError(error) => state.last_error = error,
-    }
-    state.revision += 1;
-}
-
 #[derive(Debug, Clone)]
 struct CanvasSnapshot {
     nodes: Vec<CanvasNodeState>,
@@ -274,6 +85,27 @@ pub trait DesktopApi: Send + Sync {
         replace: &str,
     ) -> Result<workdesk_core::PdfOperationResponse>;
     async fn pdf_save_version(&self, path: &str) -> Result<workdesk_core::PdfOperationResponse>;
+
+    async fn list_agent_capabilities(&self) -> Result<Vec<CodexModelCapability>>;
+    async fn list_agent_workspace_sessions(&self) -> Result<Vec<AgentWorkspaceSession>>;
+    async fn update_agent_workspace_session_config(
+        &self,
+        session_id: &str,
+        config: CodexNativeSessionConfig,
+        last_active_panel: Option<&str>,
+    ) -> Result<AgentWorkspaceSession>;
+    async fn list_agent_workspace_messages(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<AgentWorkspaceMessage>>;
+    async fn list_choice_prompts(&self, session_id: &str) -> Result<Vec<ChoicePrompt>>;
+    async fn answer_choice_prompt(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        selected_option_id: Option<&str>,
+        freeform_answer: Option<&str>,
+    ) -> Result<ChoicePrompt>;
 }
 
 #[async_trait]
@@ -399,6 +231,46 @@ impl DesktopApi for ApiClient {
     async fn pdf_save_version(&self, path: &str) -> Result<workdesk_core::PdfOperationResponse> {
         self.pdf_save_version(path).await
     }
+
+    async fn list_agent_capabilities(&self) -> Result<Vec<CodexModelCapability>> {
+        self.list_agent_capabilities().await
+    }
+
+    async fn list_agent_workspace_sessions(&self) -> Result<Vec<AgentWorkspaceSession>> {
+        self.list_agent_workspace_sessions().await
+    }
+
+    async fn update_agent_workspace_session_config(
+        &self,
+        session_id: &str,
+        config: CodexNativeSessionConfig,
+        last_active_panel: Option<&str>,
+    ) -> Result<AgentWorkspaceSession> {
+        self.update_agent_workspace_session_config(session_id, config, last_active_panel)
+            .await
+    }
+
+    async fn list_agent_workspace_messages(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<AgentWorkspaceMessage>> {
+        self.list_agent_workspace_messages(session_id).await
+    }
+
+    async fn list_choice_prompts(&self, session_id: &str) -> Result<Vec<ChoicePrompt>> {
+        self.list_choice_prompts(session_id).await
+    }
+
+    async fn answer_choice_prompt(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        selected_option_id: Option<&str>,
+        freeform_answer: Option<&str>,
+    ) -> Result<ChoicePrompt> {
+        self.answer_choice_prompt(session_id, prompt_id, selected_option_id, freeform_answer)
+            .await
+    }
 }
 #[derive(Clone)]
 pub struct DesktopAppController {
@@ -442,8 +314,13 @@ impl DesktopAppController {
     }
 
     pub async fn bootstrap(&self) -> Result<()> {
+        self.refresh_agent_capabilities().await?;
+        self.refresh_agent_sessions().await?;
         self.refresh_workflows().await?;
         self.refresh_runs().await?;
+        if self.snapshot().active_agent_session_id.is_some() {
+            self.refresh_active_agent_workspace().await?;
+        }
         Ok(())
     }
 
@@ -453,7 +330,8 @@ impl DesktopAppController {
 
         let result = match command {
             DesktopCommand::Open => {
-                self.apply(ControllerAction::SetRoute(UiRoute::RunList));
+                self.apply(ControllerAction::SetRoute(UiRoute::Workbench));
+                self.refresh_agent_sessions().await?;
                 self.refresh_runs().await
             }
             DesktopCommand::OpenRun { run_id } => {
@@ -497,6 +375,169 @@ impl DesktopAppController {
     pub async fn refresh_workflows(&self) -> Result<()> {
         let workflows = self.api.list_workflows().await?;
         self.apply(ControllerAction::SetWorkflows(workflows));
+        Ok(())
+    }
+
+    pub async fn refresh_agent_capabilities(&self) -> Result<()> {
+        let capabilities = self.api.list_agent_capabilities().await?;
+        self.apply(ControllerAction::SetModelCapabilities(capabilities));
+        Ok(())
+    }
+
+    pub async fn refresh_agent_sessions(&self) -> Result<()> {
+        let sessions = self.api.list_agent_workspace_sessions().await?;
+        self.apply(ControllerAction::SetAgentSessions(sessions));
+        Ok(())
+    }
+
+    pub async fn refresh_active_agent_workspace(&self) -> Result<()> {
+        let session_id = self
+            .snapshot()
+            .active_agent_session_id
+            .ok_or_else(|| anyhow!("no agent session selected"))?;
+        let messages = self.api.list_agent_workspace_messages(&session_id).await?;
+        let prompts = self.api.list_choice_prompts(&session_id).await?;
+        self.apply(ControllerAction::SetAgentMessages(messages));
+        self.apply(ControllerAction::SetChoicePrompts(prompts));
+        Ok(())
+    }
+
+    pub fn select_agent_session(&self, session_id: Option<String>) {
+        self.apply(ControllerAction::SelectAgentSession(session_id));
+    }
+
+    pub async fn activate_agent_session(&self, session_id: &str) -> Result<()> {
+        self.apply(ControllerAction::SelectAgentSession(Some(session_id.to_string())));
+        self.refresh_active_agent_workspace().await
+    }
+
+    pub async fn answer_choice_prompt_option(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        option_id: &str,
+    ) -> Result<()> {
+        let _ = self
+            .api
+            .answer_choice_prompt(session_id, prompt_id, Some(option_id), None)
+            .await?;
+        if self.snapshot().active_agent_session_id.as_deref() == Some(session_id) {
+            self.refresh_active_agent_workspace().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn cycle_active_model(&self) -> Result<()> {
+        let snapshot = self.snapshot();
+        let session = self
+            .active_agent_session(&snapshot)
+            .ok_or_else(|| anyhow!("no agent session selected"))?;
+        if snapshot.model_capabilities.is_empty() {
+            return Ok(());
+        }
+        let current_index = snapshot
+            .model_capabilities
+            .iter()
+            .position(|capability| session.config.model.as_deref() == Some(capability.model.as_str()))
+            .unwrap_or(usize::MAX);
+        let next_index = if current_index == usize::MAX {
+            0
+        } else {
+            (current_index + 1) % snapshot.model_capabilities.len()
+        };
+        let next_capability = &snapshot.model_capabilities[next_index];
+        let mut config = session.config.clone();
+        config.model = Some(next_capability.model.clone());
+        if !next_capability.reasoning_values.iter().any(|value| {
+            session.config.model_reasoning_effort.as_deref() == Some(value.reasoning_effort.as_str())
+        }) {
+            config.model_reasoning_effort = next_capability.default_reasoning_effort.clone();
+        }
+        if !next_capability.supports_speed {
+            config.speed = Some(false);
+        }
+        self.persist_active_session_config(&session.session_id, config, session.last_active_panel.clone())
+            .await
+    }
+
+    pub async fn cycle_active_reasoning_effort(&self) -> Result<()> {
+        let snapshot = self.snapshot();
+        let session = self
+            .active_agent_session(&snapshot)
+            .ok_or_else(|| anyhow!("no agent session selected"))?;
+        let capability = self
+            .active_model_capability(&snapshot, &session)
+            .ok_or_else(|| anyhow!("no model capability available"))?;
+        if capability.reasoning_values.is_empty() {
+            return Ok(());
+        }
+        let current_index = capability
+            .reasoning_values
+            .iter()
+            .position(|value| {
+                session.config.model_reasoning_effort.as_deref()
+                    == Some(value.reasoning_effort.as_str())
+            })
+            .unwrap_or(usize::MAX);
+        let next_index = if current_index == usize::MAX {
+            0
+        } else {
+            (current_index + 1) % capability.reasoning_values.len()
+        };
+        let mut config = session.config.clone();
+        config.model_reasoning_effort =
+            Some(capability.reasoning_values[next_index].reasoning_effort.clone());
+        self.persist_active_session_config(&session.session_id, config, session.last_active_panel.clone())
+            .await
+    }
+
+    pub async fn toggle_active_speed(&self) -> Result<()> {
+        let snapshot = self.snapshot();
+        let session = self
+            .active_agent_session(&snapshot)
+            .ok_or_else(|| anyhow!("no agent session selected"))?;
+        let capability = self
+            .active_model_capability(&snapshot, &session)
+            .ok_or_else(|| anyhow!("no model capability available"))?;
+        if !capability.supports_speed {
+            return Ok(());
+        }
+        let mut config = session.config.clone();
+        config.speed = Some(!config.speed.unwrap_or(false));
+        self.persist_active_session_config(&session.session_id, config, session.last_active_panel.clone())
+            .await
+    }
+
+    pub async fn toggle_plan_mode(&self) -> Result<()> {
+        let snapshot = self.snapshot();
+        let session = self
+            .active_agent_session(&snapshot)
+            .ok_or_else(|| anyhow!("no agent session selected"))?;
+        let mut config = session.config.clone();
+        config.plan_mode = !config.plan_mode;
+        self.persist_active_session_config(&session.session_id, config, session.last_active_panel.clone())
+            .await
+    }
+
+    pub async fn create_new_file_from_workbench(&self) -> Result<()> {
+        let filename = format!("workbench-{}.md", Utc::now().format("%Y%m%d-%H%M%S"));
+        self.create_file(&filename, "").await?;
+        self.open_file(&filename).await
+    }
+
+    pub async fn answer_choice_prompt_text(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        text: &str,
+    ) -> Result<()> {
+        let _ = self
+            .api
+            .answer_choice_prompt(session_id, prompt_id, None, Some(text))
+            .await?;
+        if self.snapshot().active_agent_session_id.as_deref() == Some(session_id) {
+            self.refresh_active_agent_workspace().await?;
+        }
         Ok(())
     }
 
@@ -1002,6 +1043,52 @@ impl DesktopAppController {
         Ok(())
     }
 
+    fn active_agent_session(&self, snapshot: &UiStateSnapshot) -> Option<AgentWorkspaceSession> {
+        snapshot
+            .active_agent_session_id
+            .as_ref()
+            .and_then(|session_id| {
+                snapshot
+                    .agent_sessions
+                    .iter()
+                    .find(|session| session.session_id == *session_id)
+                    .cloned()
+            })
+    }
+
+    fn active_model_capability(
+        &self,
+        snapshot: &UiStateSnapshot,
+        session: &AgentWorkspaceSession,
+    ) -> Option<CodexModelCapability> {
+        let model = session.config.model.as_deref()?;
+        snapshot
+            .model_capabilities
+            .iter()
+            .find(|capability| capability.model == model)
+            .cloned()
+    }
+
+    async fn persist_active_session_config(
+        &self,
+        session_id: &str,
+        config: CodexNativeSessionConfig,
+        last_active_panel: Option<String>,
+    ) -> Result<()> {
+        let _ = self
+            .api
+            .update_agent_workspace_session_config(
+                session_id,
+                config,
+                last_active_panel.as_deref(),
+            )
+            .await?;
+        self.refresh_agent_sessions().await?;
+        self.apply(ControllerAction::SelectAgentSession(Some(session_id.to_string())));
+        self.refresh_active_agent_workspace().await?;
+        Ok(())
+    }
+
     fn workspace_root_from_entries(&self) -> String {
         let snapshot = self.snapshot();
         if snapshot.workspace_entries.is_empty() {
@@ -1039,3 +1126,4 @@ fn canvas_from_workflow(workflow: &WorkflowDefinition) -> (Vec<CanvasNodeState>,
         .collect();
     (nodes, workflow.edges.clone())
 }
+

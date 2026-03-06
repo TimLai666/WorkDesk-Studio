@@ -1,8 +1,11 @@
 use crate::errors::CoreError;
 use crate::repository::CoreRepository;
 use crate::types::{
-    ApprovalState, AuthLoginInput, AuthSessionResponse, AuthSwitchInput, CreateProposalInput,
-    CreateWorkflowInput, MemoryRecord, RunSkillSnapshot, SkillRecord, UpsertMemoryInput,
+    AgentWorkspaceMessage, AgentWorkspaceMessageRole, AgentWorkspaceSession, ApprovalState,
+    AppendAgentWorkspaceMessageInput, AuthLoginInput, AuthSessionResponse, AuthSwitchInput,
+    ChoicePrompt, ChoicePromptAnswerInput, ChoicePromptOption, CreateAgentWorkspaceSessionInput,
+    CreateChoicePromptInput, CreateProposalInput, CreateWorkflowInput, MemoryRecord,
+    RunSkillSnapshot, SkillRecord, UpdateAgentWorkspaceSessionConfigInput, UpsertMemoryInput,
     UpsertSkillInput, WorkflowChangeProposal, WorkflowDefinition, WorkflowNode, WorkflowRun,
     WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
 };
@@ -88,12 +91,16 @@ impl CoreService {
             id: Uuid::new_v4().to_string(),
             name: input.name,
             timezone: input.timezone,
+            agent_defaults: input.agent_defaults,
             nodes: input
                 .nodes
                 .into_iter()
                 .map(|node| WorkflowNode {
                     id: node.id,
                     kind: node.kind,
+                    x: node.x,
+                    y: node.y,
+                    config: node.config,
                 })
                 .collect(),
             edges: input.edges,
@@ -235,6 +242,185 @@ impl CoreService {
             .list_memory()
             .await
             .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn create_agent_workspace_session(
+        &self,
+        input: CreateAgentWorkspaceSessionInput,
+    ) -> std::result::Result<AgentWorkspaceSession, CoreError> {
+        let session = AgentWorkspaceSession {
+            session_id: Uuid::new_v4().to_string(),
+            title: input.title,
+            config: input.config.unwrap_or_default(),
+            last_active_panel: input.last_active_panel,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        self.repo
+            .create_agent_workspace_session(&session)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        Ok(session)
+    }
+
+    pub async fn list_agent_workspace_sessions(
+        &self,
+    ) -> std::result::Result<Vec<AgentWorkspaceSession>, CoreError> {
+        self.repo
+            .list_agent_workspace_sessions()
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn update_agent_workspace_session_config(
+        &self,
+        session_id: &str,
+        input: UpdateAgentWorkspaceSessionConfigInput,
+    ) -> std::result::Result<AgentWorkspaceSession, CoreError> {
+        let mut session = self
+            .repo
+            .get_agent_workspace_session(session_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or_else(|| CoreError::BadRequest("agent session not found".into()))?;
+        if input.model.is_some() {
+            session.config.model = input.model;
+        }
+        if input.model_reasoning_effort.is_some() {
+            session.config.model_reasoning_effort = input.model_reasoning_effort;
+        }
+        if input.speed.is_some() {
+            session.config.speed = input.speed;
+        }
+        if let Some(plan_mode) = input.plan_mode {
+            session.config.plan_mode = plan_mode;
+        }
+        if input.last_active_panel.is_some() {
+            session.last_active_panel = input.last_active_panel;
+        }
+        session.updated_at = chrono::Utc::now();
+        self.repo
+            .update_agent_workspace_session(&session)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        Ok(session)
+    }
+
+    pub async fn append_agent_workspace_message(
+        &self,
+        session_id: &str,
+        role: AgentWorkspaceMessageRole,
+        content: String,
+    ) -> std::result::Result<AgentWorkspaceMessage, CoreError> {
+        let _ = self
+            .repo
+            .get_agent_workspace_session(session_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or_else(|| CoreError::BadRequest("agent session not found".into()))?;
+        let message = AgentWorkspaceMessage {
+            message_id: Uuid::new_v4().to_string(),
+            session_id: session_id.to_string(),
+            role,
+            content,
+            created_at: chrono::Utc::now(),
+        };
+        self.repo
+            .append_agent_workspace_message(&message)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        Ok(message)
+    }
+
+    pub async fn append_agent_workspace_message_input(
+        &self,
+        session_id: &str,
+        input: AppendAgentWorkspaceMessageInput,
+    ) -> std::result::Result<AgentWorkspaceMessage, CoreError> {
+        self.append_agent_workspace_message(session_id, input.role, input.content)
+            .await
+    }
+
+    pub async fn list_agent_workspace_messages(
+        &self,
+        session_id: &str,
+    ) -> std::result::Result<Vec<AgentWorkspaceMessage>, CoreError> {
+        self.repo
+            .list_agent_workspace_messages(session_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn create_choice_prompt(
+        &self,
+        session_id: &str,
+        input: CreateChoicePromptInput,
+    ) -> std::result::Result<ChoicePrompt, CoreError> {
+        let _ = self
+            .repo
+            .get_agent_workspace_session(session_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or_else(|| CoreError::BadRequest("agent session not found".into()))?;
+        let prompt = ChoicePrompt {
+            prompt_id: Uuid::new_v4().to_string(),
+            session_id: session_id.to_string(),
+            question: input.question,
+            options: input
+                .options
+                .into_iter()
+                .map(|option| ChoicePromptOption {
+                    option_id: option.option_id,
+                    label: option.label,
+                    description: option.description,
+                })
+                .collect(),
+            recommended_option_id: input.recommended_option_id,
+            allow_freeform: input.allow_freeform,
+            status: crate::types::ChoicePromptStatus::Pending,
+            selected_option_id: None,
+            freeform_answer: None,
+            created_at: chrono::Utc::now(),
+            answered_at: None,
+        };
+        self.repo
+            .create_choice_prompt(&prompt)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        Ok(prompt)
+    }
+
+    pub async fn list_choice_prompts(
+        &self,
+        session_id: &str,
+    ) -> std::result::Result<Vec<ChoicePrompt>, CoreError> {
+        self.repo
+            .list_choice_prompts(session_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))
+    }
+
+    pub async fn answer_choice_prompt(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        input: ChoicePromptAnswerInput,
+    ) -> std::result::Result<ChoicePrompt, CoreError> {
+        let mut prompt = self
+            .repo
+            .get_choice_prompt(session_id, prompt_id)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?
+            .ok_or_else(|| CoreError::BadRequest("choice prompt not found".into()))?;
+        prompt.status = crate::types::ChoicePromptStatus::Answered;
+        prompt.selected_option_id = input.selected_option_id;
+        prompt.freeform_answer = input.freeform_answer;
+        prompt.answered_at = Some(chrono::Utc::now());
+        self.repo
+            .update_choice_prompt(&prompt)
+            .await
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        Ok(prompt)
     }
 
     pub async fn queue_workflow_run(

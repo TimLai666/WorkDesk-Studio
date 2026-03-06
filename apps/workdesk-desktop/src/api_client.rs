@@ -4,9 +4,12 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 use workdesk_core::{
-    AuthLoginInput, AuthSessionResponse, CancelRunInput, RetryRunInput, RunSkillSnapshot,
-    RunWorkflowInput, TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowRun,
-    WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus, UpdateWorkflowStatusInput,
+    AgentWorkspaceMessage, AgentWorkspaceSession, AppendAgentWorkspaceMessageInput,
+    AuthLoginInput, AuthSessionResponse, CancelRunInput, ChoicePrompt,
+    ChoicePromptAnswerInput, CodexModelCapability, CodexNativeSessionConfig, RetryRunInput,
+    RunSkillSnapshot, RunWorkflowInput, TerminalSessionResponse, TerminalStartInput,
+    UpdateAgentWorkspaceSessionConfigInput, WorkflowDefinition, WorkflowRun, WorkflowRunEvent,
+    WorkflowRunNodeState, WorkflowStatus, UpdateWorkflowStatusInput,
 };
 
 #[derive(Debug, Clone)]
@@ -183,6 +186,117 @@ impl ApiClient {
             .send()
             .await
             .with_context(|| format!("request retry run {run_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn list_agent_capabilities(&self) -> Result<Vec<CodexModelCapability>> {
+        let url = self.endpoint("/api/v1/agent/capabilities")?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("request agent capabilities")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn list_agent_workspace_sessions(&self) -> Result<Vec<AgentWorkspaceSession>> {
+        let url = self.endpoint("/api/v1/agent/sessions")?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("request agent sessions")?;
+        parse_envelope(response).await
+    }
+
+    pub async fn update_agent_workspace_session_config(
+        &self,
+        session_id: &str,
+        config: CodexNativeSessionConfig,
+        last_active_panel: Option<&str>,
+    ) -> Result<AgentWorkspaceSession> {
+        let url = self.endpoint(&format!("/api/v1/agent/sessions/{session_id}/config"))?;
+        let response = self
+            .http
+            .patch(url)
+            .json(&UpdateAgentWorkspaceSessionConfigInput {
+                model: config.model,
+                model_reasoning_effort: config.model_reasoning_effort,
+                speed: config.speed,
+                plan_mode: Some(config.plan_mode),
+                last_active_panel: last_active_panel.map(ToString::to_string),
+            })
+            .send()
+            .await
+            .with_context(|| format!("update agent session {session_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn list_agent_workspace_messages(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<AgentWorkspaceMessage>> {
+        let url = self.endpoint(&format!("/api/v1/agent/sessions/{session_id}/messages"))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("request session messages for {session_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn append_agent_workspace_message(
+        &self,
+        session_id: &str,
+        input: &AppendAgentWorkspaceMessageInput,
+    ) -> Result<AgentWorkspaceMessage> {
+        let url = self.endpoint(&format!("/api/v1/agent/sessions/{session_id}/messages"))?;
+        let response = self
+            .http
+            .post(url)
+            .json(input)
+            .send()
+            .await
+            .with_context(|| format!("append session message for {session_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn list_choice_prompts(&self, session_id: &str) -> Result<Vec<ChoicePrompt>> {
+        let url = self.endpoint(&format!(
+            "/api/v1/agent/sessions/{session_id}/choice-prompts"
+        ))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("request choice prompts for {session_id}"))?;
+        parse_envelope(response).await
+    }
+
+    pub async fn answer_choice_prompt(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        selected_option_id: Option<&str>,
+        freeform_answer: Option<&str>,
+    ) -> Result<ChoicePrompt> {
+        let url = self.endpoint(&format!(
+            "/api/v1/agent/sessions/{session_id}/choice-prompts/{prompt_id}/answer"
+        ))?;
+        let response = self
+            .http
+            .post(url)
+            .json(&ChoicePromptAnswerInput {
+                selected_option_id: selected_option_id.map(ToString::to_string),
+                freeform_answer: freeform_answer.map(ToString::to_string),
+            })
+            .send()
+            .await
+            .with_context(|| format!("answer choice prompt {prompt_id}"))?;
         parse_envelope(response).await
     }
 

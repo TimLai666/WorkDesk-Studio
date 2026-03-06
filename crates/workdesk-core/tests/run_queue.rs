@@ -48,9 +48,13 @@ async fn run_skill_snapshot_prefers_user_scope_over_shared() {
         .create_workflow(CreateWorkflowInput {
             name: "run".into(),
             timezone: "Asia/Taipei".into(),
+            agent_defaults: None,
             nodes: vec![WorkflowNodeInput {
                 id: "n1".into(),
                 kind: WorkflowNodeKind::ScheduleTrigger,
+                x: None,
+                y: None,
+                config: None,
             }],
             edges: vec![],
         })

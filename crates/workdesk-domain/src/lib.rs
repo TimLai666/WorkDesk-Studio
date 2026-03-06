@@ -36,10 +36,16 @@ pub enum WorkflowNodeKind {
     ApprovalGate,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowNode {
     pub id: String,
     pub kind: WorkflowNodeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<Value>,
 }
 
 impl WorkflowNode {
@@ -47,6 +53,9 @@ impl WorkflowNode {
         Self {
             id: id.into(),
             kind,
+            x: None,
+            y: None,
+            config: None,
         }
     }
 }
@@ -66,7 +75,13 @@ impl WorkflowEdge {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct WorkflowAgentDefaults {
+    pub model: Option<String>,
+    pub model_reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowDefinition {
     pub id: String,
     pub name: String,
@@ -75,6 +90,8 @@ pub struct WorkflowDefinition {
     pub edges: Vec<WorkflowEdge>,
     pub version: u64,
     pub status: WorkflowStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_defaults: Option<WorkflowAgentDefaults>,
 }
 
 impl WorkflowDefinition {
@@ -232,6 +249,87 @@ pub struct AgentSession {
 pub struct AgentEvent {
     pub kind: String,
     pub payload: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CodexNativeSessionConfig {
+    pub model: Option<String>,
+    pub model_reasoning_effort: Option<String>,
+    pub speed: Option<bool>,
+    pub plan_mode: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodexReasoningEffortOption {
+    pub reasoning_effort: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodexModelCapability {
+    pub model: String,
+    pub display_name: String,
+    pub reasoning_values: Vec<CodexReasoningEffortOption>,
+    pub default_reasoning_effort: Option<String>,
+    pub supports_speed: bool,
+    pub supports_plan_mode: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentWorkspaceSession {
+    pub session_id: String,
+    pub title: String,
+    pub config: CodexNativeSessionConfig,
+    pub last_active_panel: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWorkspaceMessageRole {
+    User,
+    Assistant,
+    System,
+    Tool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentWorkspaceMessage {
+    pub message_id: String,
+    pub session_id: String,
+    pub role: AgentWorkspaceMessageRole,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChoicePromptOption {
+    pub option_id: String,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChoicePromptStatus {
+    Pending,
+    Answered,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChoicePrompt {
+    pub prompt_id: String,
+    pub session_id: String,
+    pub question: String,
+    pub options: Vec<ChoicePromptOption>,
+    pub recommended_option_id: Option<String>,
+    pub allow_freeform: bool,
+    pub status: ChoicePromptStatus,
+    pub selected_option_id: Option<String>,
+    pub freeform_answer: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub answered_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

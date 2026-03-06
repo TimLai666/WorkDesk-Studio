@@ -37,6 +37,7 @@ pub struct AutomationResponse {
     pub ok: bool,
     pub error: Option<CommandBusError>,
     pub state: Option<UiStateSnapshot>,
+    pub pending_choice_prompt: Option<workdesk_core::ChoicePrompt>,
 }
 
 impl AutomationResponse {
@@ -45,6 +46,19 @@ impl AutomationResponse {
             ok: true,
             error: None,
             state: Some(state),
+            pending_choice_prompt: None,
+        }
+    }
+
+    fn ok_prompt(
+        state: UiStateSnapshot,
+        pending_choice_prompt: Option<workdesk_core::ChoicePrompt>,
+    ) -> Self {
+        Self {
+            ok: true,
+            error: None,
+            state: Some(state),
+            pending_choice_prompt,
         }
     }
 
@@ -57,6 +71,7 @@ impl AutomationResponse {
                 details: None,
             }),
             state: None,
+            pending_choice_prompt: None,
         }
     }
 }
@@ -97,6 +112,12 @@ async fn handle_request(
 ) -> AutomationResponse {
     let outcome = match request.request_type.as_str() {
         "get_state" => Ok(()),
+        "get_pending_choice_prompt" => {
+            return AutomationResponse::ok_prompt(
+                controller.snapshot(),
+                controller.snapshot().pending_choice_prompt,
+            )
+        }
         "refresh_runs" => controller.refresh_runs().await,
         "dispatch_command" => match parse_command(&request.payload) {
             Ok(command) => controller.dispatch_command(command).await,
@@ -104,6 +125,28 @@ async fn handle_request(
         },
         "cancel_selected_run" => controller.cancel_selected_run().await,
         "retry_selected_run" => controller.retry_selected_run().await,
+        "submit_choice_prompt_option" => {
+            let session_id = payload_string(&request.payload, "session_id");
+            let prompt_id = payload_string(&request.payload, "prompt_id");
+            let option_id = payload_string(&request.payload, "option_id");
+            match (session_id, prompt_id, option_id) {
+                (Ok(session_id), Ok(prompt_id), Ok(option_id)) => controller
+                    .answer_choice_prompt_option(&session_id, &prompt_id, &option_id)
+                    .await,
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "submit_choice_prompt_text" => {
+            let session_id = payload_string(&request.payload, "session_id");
+            let prompt_id = payload_string(&request.payload, "prompt_id");
+            let text = payload_string(&request.payload, "text");
+            match (session_id, prompt_id, text) {
+                (Ok(session_id), Ok(prompt_id), Ok(text)) => controller
+                    .answer_choice_prompt_text(&session_id, &prompt_id, &text)
+                    .await,
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
         other => Err(anyhow!("unknown automation request type `{other}`")),
     };
 
@@ -118,6 +161,14 @@ fn parse_command(payload: &Value) -> Result<DesktopCommand> {
         .get("command")
         .ok_or_else(|| anyhow!("payload.command is required"))?;
     serde_json::from_value(command.clone()).context("decode payload.command")
+}
+
+fn payload_string(payload: &Value, field: &str) -> Result<String> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| anyhow!("payload.{field} is required"))
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +225,61 @@ impl AutomationClient {
         .await
     }
 
+    pub async fn get_pending_choice_prompt(&self) -> Result<Option<workdesk_core::ChoicePrompt>> {
+        let response = self
+            .send_response(AutomationRequest {
+                request_type: "get_pending_choice_prompt".into(),
+                payload: Value::Object(Default::default()),
+                request_id: Uuid::new_v4().to_string(),
+            })
+            .await?;
+        Ok(response.pending_choice_prompt)
+    }
+
+    pub async fn submit_choice_prompt_option(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        option_id: &str,
+    ) -> Result<UiStateSnapshot> {
+        self.send(AutomationRequest {
+            request_type: "submit_choice_prompt_option".into(),
+            payload: serde_json::json!({
+                "session_id": session_id,
+                "prompt_id": prompt_id,
+                "option_id": option_id,
+            }),
+            request_id: Uuid::new_v4().to_string(),
+        })
+        .await
+    }
+
+    pub async fn submit_choice_prompt_text(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        text: &str,
+    ) -> Result<UiStateSnapshot> {
+        self.send(AutomationRequest {
+            request_type: "submit_choice_prompt_text".into(),
+            payload: serde_json::json!({
+                "session_id": session_id,
+                "prompt_id": prompt_id,
+                "text": text,
+            }),
+            request_id: Uuid::new_v4().to_string(),
+        })
+        .await
+    }
+
     async fn send(&self, request: AutomationRequest) -> Result<UiStateSnapshot> {
+        let response = self.send_response(request).await?;
+        response
+            .state
+            .ok_or_else(|| anyhow!("automation response missing state"))
+    }
+
+    async fn send_response(&self, request: AutomationRequest) -> Result<AutomationResponse> {
         let message = format!("{}\n", serde_json::to_string(&request)?);
         let response_raw = write_and_read_response(&self.endpoint, message).await?;
         let response: AutomationResponse =
@@ -187,9 +292,7 @@ impl AutomationClient {
             });
             return Err(anyhow!("{}: {}", error.code, error.message));
         }
-        response
-            .state
-            .ok_or_else(|| anyhow!("automation response missing state"))
+        Ok(response)
     }
 }
 

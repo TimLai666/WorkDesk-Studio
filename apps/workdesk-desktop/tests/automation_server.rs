@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use workdesk_core::{
-    FsDiffResponse, FsReadResponse, FsSearchMatch, FsTreeEntry, OfficeVersionResponse,
-    PdfOperationResponse, RunNodeStatus, RunSkillSnapshot, RunStatus, Scope,
-    TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowRun,
-    WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
+    AgentWorkspaceMessage, AgentWorkspaceSession, ChoicePrompt, ChoicePromptOption,
+    ChoicePromptStatus, CodexNativeSessionConfig, FsDiffResponse, FsReadResponse, FsSearchMatch,
+    FsTreeEntry, OfficeVersionResponse, PdfOperationResponse, RunNodeStatus, RunSkillSnapshot,
+    RunStatus, Scope, TerminalSessionResponse, TerminalStartInput, WorkflowDefinition,
+    WorkflowRun, WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
 };
 use workdesk_desktop::automation::{AutomationClient, AutomationServer};
 use workdesk_desktop::command::DesktopCommand;
@@ -21,6 +22,9 @@ struct FakeDesktopApi {
     events: Mutex<HashMap<String, Vec<WorkflowRunEvent>>>,
     skills: Mutex<HashMap<String, Vec<RunSkillSnapshot>>>,
     nodes: Mutex<HashMap<String, Vec<WorkflowRunNodeState>>>,
+    sessions: Mutex<Vec<AgentWorkspaceSession>>,
+    messages: Mutex<HashMap<String, Vec<AgentWorkspaceMessage>>>,
+    prompts: Mutex<HashMap<String, Vec<ChoicePrompt>>>,
 }
 
 impl FakeDesktopApi {
@@ -72,11 +76,57 @@ impl FakeDesktopApi {
                 updated_at: Utc::now(),
             }],
         );
+        let session = AgentWorkspaceSession {
+            session_id: "session-1".into(),
+            title: "Workbench".into(),
+            config: CodexNativeSessionConfig {
+                model: Some("gpt-5.4".into()),
+                model_reasoning_effort: Some("high".into()),
+                speed: Some(true),
+                plan_mode: true,
+            },
+            last_active_panel: Some("runs".into()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let mut messages = HashMap::new();
+        messages.insert("session-1".into(), Vec::new());
+        let mut prompts = HashMap::new();
+        prompts.insert(
+            "session-1".into(),
+            vec![ChoicePrompt {
+                prompt_id: "prompt-1".into(),
+                session_id: "session-1".into(),
+                question: "Choose rollout path".into(),
+                options: vec![
+                    ChoicePromptOption {
+                        option_id: "safe".into(),
+                        label: "Safe rollout".into(),
+                        description: "Lower change risk".into(),
+                    },
+                    ChoicePromptOption {
+                        option_id: "fast".into(),
+                        label: "Fast rollout".into(),
+                        description: "Shorter delivery time".into(),
+                    },
+                ],
+                recommended_option_id: Some("safe".into()),
+                allow_freeform: true,
+                status: ChoicePromptStatus::Pending,
+                selected_option_id: None,
+                freeform_answer: None,
+                created_at: Utc::now(),
+                answered_at: None,
+            }],
+        );
         Self {
             runs: Mutex::new(vec![run]),
             events: Mutex::new(events),
             skills: Mutex::new(skills),
             nodes: Mutex::new(nodes),
+            sessions: Mutex::new(vec![session]),
+            messages: Mutex::new(messages),
+            prompts: Mutex::new(prompts),
         }
     }
 }
@@ -100,6 +150,7 @@ impl DesktopApi for FakeDesktopApi {
             edges: Vec::new(),
             version: 1,
             status,
+            agent_defaults: None,
         })
     }
 
@@ -299,6 +350,82 @@ impl DesktopApi for FakeDesktopApi {
             version_name: "v4".into(),
         })
     }
+
+    async fn list_agent_workspace_sessions(&self) -> Result<Vec<AgentWorkspaceSession>> {
+        Ok(self.sessions.lock().expect("sessions lock").clone())
+    }
+
+    async fn list_agent_capabilities(&self) -> Result<Vec<workdesk_core::CodexModelCapability>> {
+        Ok(vec![workdesk_core::CodexModelCapability {
+            model: "gpt-5.4".into(),
+            display_name: "gpt-5.4".into(),
+            reasoning_values: vec![workdesk_core::CodexReasoningEffortOption {
+                reasoning_effort: "high".into(),
+                description: "High reasoning".into(),
+            }],
+            default_reasoning_effort: Some("high".into()),
+            supports_speed: false,
+            supports_plan_mode: true,
+        }])
+    }
+
+    async fn update_agent_workspace_session_config(
+        &self,
+        session_id: &str,
+        config: CodexNativeSessionConfig,
+        last_active_panel: Option<&str>,
+    ) -> Result<AgentWorkspaceSession> {
+        let mut sessions = self.sessions.lock().expect("sessions lock");
+        let session = sessions
+            .iter_mut()
+            .find(|item| item.session_id == session_id)
+            .expect("session exists");
+        session.config = config;
+        session.last_active_panel = last_active_panel.map(ToString::to_string);
+        Ok(session.clone())
+    }
+
+    async fn list_agent_workspace_messages(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<AgentWorkspaceMessage>> {
+        Ok(self
+            .messages
+            .lock()
+            .expect("messages lock")
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn list_choice_prompts(&self, session_id: &str) -> Result<Vec<ChoicePrompt>> {
+        Ok(self
+            .prompts
+            .lock()
+            .expect("prompts lock")
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn answer_choice_prompt(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        selected_option_id: Option<&str>,
+        freeform_answer: Option<&str>,
+    ) -> Result<ChoicePrompt> {
+        let mut prompts = self.prompts.lock().expect("prompts lock");
+        let prompt = prompts
+            .get_mut(session_id)
+            .and_then(|items| items.iter_mut().find(|item| item.prompt_id == prompt_id))
+            .expect("prompt exists");
+        prompt.status = ChoicePromptStatus::Answered;
+        prompt.selected_option_id = selected_option_id.map(ToString::to_string);
+        prompt.freeform_answer = freeform_answer.map(ToString::to_string);
+        prompt.answered_at = Some(Utc::now());
+        Ok(prompt.clone())
+    }
 }
 
 #[tokio::test]
@@ -351,6 +478,41 @@ async fn automation_channel_supports_state_and_actions() {
         .as_ref()
         .map(|run_id| run_id != "run-1")
         .unwrap_or(false));
+
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn automation_channel_exposes_pending_choice_prompt_and_answers_it() {
+    let endpoint = unique_endpoint("Automation");
+    let controller = DesktopAppController::new(Arc::new(FakeDesktopApi::seeded()));
+    controller.bootstrap().await.expect("bootstrap");
+
+    let endpoint_for_server = endpoint.clone();
+    let server_controller = controller.clone();
+    let server_task = tokio::spawn(async move {
+        AutomationServer::new(endpoint_for_server)
+            .run(Arc::new(server_controller))
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(120)).await;
+
+    let client = AutomationClient::new(endpoint);
+    let prompt = client
+        .get_pending_choice_prompt()
+        .await
+        .expect("get pending choice prompt")
+        .expect("pending choice prompt");
+    assert_eq!(prompt.prompt_id, "prompt-1");
+    assert_eq!(prompt.recommended_option_id.as_deref(), Some("safe"));
+
+    let state = client
+        .submit_choice_prompt_option("session-1", "prompt-1", "safe")
+        .await
+        .expect("submit choice prompt option");
+    assert!(state.pending_choice_prompt.is_none());
+    assert_eq!(state.active_agent_session_id.as_deref(), Some("session-1"));
+    assert_eq!(state.agent_sessions.len(), 1);
 
     server_task.abort();
 }

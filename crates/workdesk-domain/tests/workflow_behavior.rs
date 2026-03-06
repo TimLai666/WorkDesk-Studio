@@ -16,6 +16,7 @@ fn workflow_definition_rejects_cyclic_graphs() {
         edges: vec![WorkflowEdge::new("a", "b"), WorkflowEdge::new("b", "a")],
         version: 1,
         status: WorkflowStatus::Draft,
+        agent_defaults: None,
     };
 
     let err = workflow

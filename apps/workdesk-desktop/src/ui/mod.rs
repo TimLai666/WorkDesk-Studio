@@ -79,6 +79,10 @@ impl WorkdeskMainView {
         self.controller.navigate(UiRoute::RunList);
     }
 
+    fn on_open_workbench(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+        self.controller.navigate(UiRoute::Workbench);
+    }
+
     fn on_open_canvas(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
         self.controller.navigate(UiRoute::WorkflowDetail);
     }
@@ -97,6 +101,9 @@ impl WorkdeskMainView {
     fn on_refresh(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
         let controller = self.controller.clone();
         self.runtime.spawn(async move {
+            let _ = controller.refresh_agent_capabilities().await;
+            let _ = controller.refresh_agent_sessions().await;
+            let _ = controller.refresh_active_agent_workspace().await;
             let _ = controller.refresh_workflows().await;
             let _ = controller.refresh_runs().await;
             let _ = controller.refresh_selected_run_detail().await;
@@ -278,6 +285,51 @@ impl WorkdeskMainView {
             let _ = controller.save_pdf_version().await;
         });
     }
+
+    fn on_cycle_model(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+        let controller = self.controller.clone();
+        self.runtime.spawn(async move {
+            let _ = controller.cycle_active_model().await;
+        });
+    }
+
+    fn on_cycle_reasoning(
+        &mut self,
+        _: &gpui::ClickEvent,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        let controller = self.controller.clone();
+        self.runtime.spawn(async move {
+            let _ = controller.cycle_active_reasoning_effort().await;
+        });
+    }
+
+    fn on_toggle_speed(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+        let controller = self.controller.clone();
+        self.runtime.spawn(async move {
+            let _ = controller.toggle_active_speed().await;
+        });
+    }
+
+    fn on_toggle_plan_mode(
+        &mut self,
+        _: &gpui::ClickEvent,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        let controller = self.controller.clone();
+        self.runtime.spawn(async move {
+            let _ = controller.toggle_plan_mode().await;
+        });
+    }
+
+    fn on_new_file(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+        let controller = self.controller.clone();
+        self.runtime.spawn(async move {
+            let _ = controller.create_new_file_from_workbench().await;
+        });
+    }
 }
 
 impl Render for WorkdeskMainView {
@@ -299,6 +351,11 @@ impl Render for WorkdeskMainView {
         let nav = div()
             .flex()
             .gap_2()
+            .child(
+                Button::new("nav-workbench")
+                    .label("Workbench")
+                    .on_click(cx.listener(Self::on_open_workbench)),
+            )
             .child(Button::new("nav-runs").label("Runs").on_click(cx.listener(Self::on_open_runs)))
             .child(Button::new("nav-canvas").label("Canvas").on_click(cx.listener(Self::on_open_canvas)))
             .child(Button::new("nav-files").label("Files").on_click(cx.listener(Self::on_open_files)))
@@ -316,6 +373,7 @@ impl Render for WorkdeskMainView {
             .child(nav)
             .child(
                 match snapshot.route {
+                    UiRoute::Workbench => render_workbench(self, cx, &snapshot).into_any_element(),
                     UiRoute::RunList | UiRoute::RunDetail => {
                         render_runs(self, cx, &snapshot).into_any_element()
                     }
@@ -335,6 +393,158 @@ impl Render for WorkdeskMainView {
                 div.child(format!("Error: {error}"))
             })
     }
+}
+
+fn render_workbench(
+    view: &WorkdeskMainView,
+    cx: &mut Context<WorkdeskMainView>,
+    snapshot: &crate::controller::UiStateSnapshot,
+) -> impl IntoElement {
+    let active_session = snapshot.active_agent_session_id.as_ref().and_then(|session_id| {
+        snapshot
+            .agent_sessions
+            .iter()
+            .find(|session| session.session_id == *session_id)
+    });
+    let active_model = active_session
+        .and_then(|session| session.config.model.clone())
+        .unwrap_or_else(|| "(none)".into());
+    let active_reasoning = active_session
+        .and_then(|session| session.config.model_reasoning_effort.clone())
+        .unwrap_or_else(|| "(none)".into());
+    let speed_label = match active_session.and_then(|session| session.config.speed) {
+        Some(true) => "Speed: on",
+        Some(false) => "Speed: off",
+        None => "Speed: unavailable",
+    };
+    let plan_label = if active_session
+        .map(|session| session.config.plan_mode)
+        .unwrap_or(false)
+    {
+        "Plan Mode: on"
+    } else {
+        "Plan Mode: off"
+    };
+
+    let session_list = snapshot.agent_sessions.iter().enumerate().fold(
+        div().flex().flex_col().gap_1().child("Sessions"),
+        |div, (index, session)| {
+            let controller = view.controller.clone();
+            let runtime = view.runtime.clone();
+            let session_id = session.session_id.clone();
+            let mut button = Button::new(("session", index))
+                .label(format!(
+                    "{} [{}]",
+                    session.title,
+                    session.config.model.clone().unwrap_or_else(|| "(model)".into())
+                ))
+                .on_click(move |_, _, _| {
+                    let controller = controller.clone();
+                    let session_id = session_id.clone();
+                    runtime.spawn(async move {
+                        let _ = controller.activate_agent_session(&session_id).await;
+                    });
+                });
+            if snapshot.active_agent_session_id.as_deref() == Some(session.session_id.as_str()) {
+                button = button.primary();
+            }
+            div.child(button)
+        },
+    );
+
+    let messages = snapshot.agent_messages.iter().fold(
+        div().flex().flex_col().gap_1().child("Messages"),
+        |div, message| div.child(format!("{:?}: {}", message.role, message.content)),
+    );
+
+    let capabilities = snapshot.model_capabilities.iter().take(8).fold(
+        div().flex().flex_col().gap_1().child("Capabilities"),
+        |div, capability| {
+            div.child(format!(
+                "{} [{}]",
+                capability.display_name,
+                capability
+                    .reasoning_values
+                    .iter()
+                    .map(|value| value.reasoning_effort.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        },
+    );
+
+    let choice_prompt = match &snapshot.pending_choice_prompt {
+        Some(prompt) => {
+            let prompt_view = prompt.options.iter().enumerate().fold(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(format!("Choice Prompt: {}", prompt.question)),
+                |div, (index, option)| {
+                    let controller = view.controller.clone();
+                    let runtime = view.runtime.clone();
+                    let session_id = prompt.session_id.clone();
+                    let prompt_id = prompt.prompt_id.clone();
+                    let option_id = option.option_id.clone();
+                    let mut button = Button::new(("prompt-option", index))
+                        .label(format!("{} - {}", option.label, option.description))
+                        .on_click(move |_, _, _| {
+                            let controller = controller.clone();
+                            let session_id = session_id.clone();
+                            let prompt_id = prompt_id.clone();
+                            let option_id = option_id.clone();
+                            runtime.spawn(async move {
+                                let _ = controller
+                                    .answer_choice_prompt_option(&session_id, &prompt_id, &option_id)
+                                    .await;
+                            });
+                        });
+                    if prompt.recommended_option_id.as_deref() == Some(option.option_id.as_str()) {
+                        button = button.primary();
+                    }
+                    div.child(button)
+                },
+            );
+            prompt_view.into_any_element()
+        }
+        None => div().child("Choice Prompt: (none)").into_any_element(),
+    };
+
+    div()
+        .flex()
+        .size_full()
+        .gap_3()
+        .child(div().flex().flex_col().gap_2().w_1_5().child(session_list).child(capabilities))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .w_2_5()
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(Button::new("model-cycle").label(format!("Model: {active_model}")).on_click(cx.listener(WorkdeskMainView::on_cycle_model)))
+                        .child(Button::new("reasoning-cycle").label(format!("Reasoning: {active_reasoning}")).on_click(cx.listener(WorkdeskMainView::on_cycle_reasoning)))
+                        .child(Button::new("speed-toggle").label(speed_label).on_click(cx.listener(WorkdeskMainView::on_toggle_speed)))
+                        .child(Button::new("plan-toggle").label(plan_label).on_click(cx.listener(WorkdeskMainView::on_toggle_plan_mode)))
+                        .child(Button::new("new-file").label("New File").on_click(cx.listener(WorkdeskMainView::on_new_file))),
+                )
+                .child(messages)
+                .child(choice_prompt),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .w_2_5()
+                .child("Context Panels")
+                .child(render_runs(view, cx, snapshot))
+                .child(render_files(view, cx, snapshot)),
+        )
 }
 
 fn render_runs(

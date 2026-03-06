@@ -47,9 +47,13 @@ async fn workflow_persists_across_restart() {
         .create_workflow(CreateWorkflowInput {
             name: "ops".into(),
             timezone: "Asia/Taipei".into(),
+            agent_defaults: None,
             nodes: vec![WorkflowNodeInput {
                 id: "n1".into(),
                 kind: WorkflowNodeKind::ScheduleTrigger,
+                x: None,
+                y: None,
+                config: None,
             }],
             edges: vec![],
         })
@@ -118,9 +122,13 @@ async fn proposal_must_be_pending_to_approve() {
         .create_workflow(CreateWorkflowInput {
             name: "ops".into(),
             timezone: "Asia/Taipei".into(),
+            agent_defaults: None,
             nodes: vec![WorkflowNodeInput {
                 id: "n1".into(),
                 kind: WorkflowNodeKind::ScheduleTrigger,
+                x: None,
+                y: None,
+                config: None,
             }],
             edges: vec![],
         })

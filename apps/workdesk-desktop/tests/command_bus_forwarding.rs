@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use workdesk_core::{
-    FsDiffResponse, FsReadResponse, FsSearchMatch, FsTreeEntry, OfficeVersionResponse,
-    PdfOperationResponse, RunNodeStatus, RunSkillSnapshot, RunStatus, Scope,
-    TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowRun,
+    AgentWorkspaceMessage, AgentWorkspaceSession, ChoicePrompt, CodexModelCapability,
+    CodexNativeSessionConfig, FsDiffResponse, FsReadResponse, FsSearchMatch, FsTreeEntry,
+    OfficeVersionResponse, PdfOperationResponse, RunNodeStatus, RunSkillSnapshot, RunStatus,
+    Scope, TerminalSessionResponse, TerminalStartInput, WorkflowDefinition, WorkflowRun,
     WorkflowRunEvent, WorkflowRunNodeState, WorkflowStatus,
 };
 use workdesk_desktop::command::DesktopCommand;
@@ -100,6 +101,7 @@ impl DesktopApi for FakeDesktopApi {
             edges: Vec::new(),
             version: 1,
             status,
+            agent_defaults: None,
         })
     }
 
@@ -298,6 +300,51 @@ impl DesktopApi for FakeDesktopApi {
             replaced_count: 0,
             version_name: "v4".into(),
         })
+    }
+
+    async fn list_agent_capabilities(&self) -> Result<Vec<CodexModelCapability>> {
+        Ok(Vec::new())
+    }
+
+    async fn list_agent_workspace_sessions(&self) -> Result<Vec<AgentWorkspaceSession>> {
+        Ok(Vec::new())
+    }
+
+    async fn update_agent_workspace_session_config(
+        &self,
+        _session_id: &str,
+        config: CodexNativeSessionConfig,
+        last_active_panel: Option<&str>,
+    ) -> Result<AgentWorkspaceSession> {
+        Ok(AgentWorkspaceSession {
+            session_id: "session-1".into(),
+            title: "Workbench".into(),
+            config,
+            last_active_panel: last_active_panel.map(ToString::to_string),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        })
+    }
+
+    async fn list_agent_workspace_messages(
+        &self,
+        _session_id: &str,
+    ) -> Result<Vec<AgentWorkspaceMessage>> {
+        Ok(Vec::new())
+    }
+
+    async fn list_choice_prompts(&self, _session_id: &str) -> Result<Vec<ChoicePrompt>> {
+        Ok(Vec::new())
+    }
+
+    async fn answer_choice_prompt(
+        &self,
+        _session_id: &str,
+        _prompt_id: &str,
+        _selected_option_id: Option<&str>,
+        _freeform_answer: Option<&str>,
+    ) -> Result<ChoicePrompt> {
+        anyhow::bail!("no prompt available")
     }
 }
 

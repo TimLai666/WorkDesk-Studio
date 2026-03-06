@@ -67,9 +67,36 @@
 - `POST /workflows`
 - `GET /workflows/{id}`
 - `PATCH /workflows/{id}/status`
-- `POST /workflows/{id}/run`（排入 run 並建立 run skills snapshot）
+- `POST /workflows/{id}/run`
 - `POST /workflows/{id}/proposals`
 - `POST /workflows/{id}/proposals/{proposal_id}/approve`
+
+Workflow 定義現在會持久化以下欄位：
+
+- 節點畫布座標：`x`、`y`
+- 節點設定 JSON：`config`
+- workflow agent 預設：`agent_defaults.model`、`agent_defaults.model_reasoning_effort`
+
+### Agent Workbench
+
+- `GET /agent/capabilities`
+- `GET /agent/sessions`
+- `POST /agent/sessions`
+- `PATCH /agent/sessions/{session_id}/config`
+- `GET /agent/sessions/{session_id}/messages`
+- `POST /agent/sessions/{session_id}/messages`
+- `GET /agent/sessions/{session_id}/choice-prompts`
+- `POST /agent/sessions/{session_id}/choice-prompts`
+- `POST /agent/sessions/{session_id}/choice-prompts/{prompt_id}/answer`
+
+Workbench 設定直接對應 Codex 原生欄位：
+
+- `model`
+- `model_reasoning_effort`
+- `speed`
+- `plan_mode`
+
+`speed` 只屬於互動 session，不會寫進 workflow 預設。
 
 ### Runs
 
@@ -113,39 +140,33 @@
 - `POST /office/save`
 - `GET /office/version?path=<relative-path>`
 - `POST /office/onlyoffice/callback`
+- `POST /office/pdf/preview`
+- `POST /office/pdf/annotate`
+- `POST /office/pdf/replace`
+- `POST /office/pdf/save-version`
 
-## Desktop 本機 IPC（Windows 優先）
+## Desktop 本機 IPC（Windows First）
 
-這一節描述 desktop 本機行程協作，不是 core HTTP API。
+這一節描述的是桌面程式本機協調，不是 core HTTP。
 
 ### Command Bus
 
 - 端點：`\\.\pipe\WorkDeskStudio.CommandBus`
-- Request：
-
-```json
-{
-  "type": "open_run",
-  "payload": { "run_id": "run-123" },
-  "request_id": "uuid"
-}
-```
-
-- Response：
-
-```json
-{
-  "ok": true,
-  "error": null
-}
-```
+- 支援命令：
+  - `open`
+  - `open_run`
+  - `open_workflow`
+  - `run_workflow`
 
 ### Automation Channel
 
 - 端點：`\\.\pipe\WorkDeskStudio.Automation`
 - 支援 request type：
   - `get_state`
+  - `get_pending_choice_prompt`
   - `refresh_runs`
   - `dispatch_command`
   - `cancel_selected_run`
   - `retry_selected_run`
+  - `submit_choice_prompt_option`
+  - `submit_choice_prompt_text`

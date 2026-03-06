@@ -34,10 +34,14 @@ async fn daemon_materializes_skill_snapshots_before_finishing_run() {
         nodes: vec![WorkflowNode {
             id: "n1".into(),
             kind: WorkflowNodeKind::ScheduleTrigger,
+            x: None,
+            y: None,
+            config: None,
         }],
         edges: vec![],
         version: 1,
         status: WorkflowStatus::Draft,
+        agent_defaults: None,
     };
     repo.create_workflow(&workflow).await.expect("create workflow");
     repo.upsert_skill(&SkillRecord {

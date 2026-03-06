@@ -67,9 +67,36 @@ Failure:
 - `POST /workflows`
 - `GET /workflows/{id}`
 - `PATCH /workflows/{id}/status`
-- `POST /workflows/{id}/run` (enqueue run + build run skill snapshot)
+- `POST /workflows/{id}/run`
 - `POST /workflows/{id}/proposals`
 - `POST /workflows/{id}/proposals/{proposal_id}/approve`
+
+Workflow definitions now persist:
+
+- node canvas coordinates: `x`, `y`
+- node config JSON: `config`
+- workflow agent defaults: `agent_defaults.model`, `agent_defaults.model_reasoning_effort`
+
+### Agent Workbench
+
+- `GET /agent/capabilities`
+- `GET /agent/sessions`
+- `POST /agent/sessions`
+- `PATCH /agent/sessions/{session_id}/config`
+- `GET /agent/sessions/{session_id}/messages`
+- `POST /agent/sessions/{session_id}/messages`
+- `GET /agent/sessions/{session_id}/choice-prompts`
+- `POST /agent/sessions/{session_id}/choice-prompts`
+- `POST /agent/sessions/{session_id}/choice-prompts/{prompt_id}/answer`
+
+Native workbench config fields map directly to Codex-native names:
+
+- `model`
+- `model_reasoning_effort`
+- `speed`
+- `plan_mode`
+
+`speed` is session-scoped. It is not persisted in workflow defaults.
 
 ### Runs
 
@@ -113,6 +140,10 @@ Failure:
 - `POST /office/save`
 - `GET /office/version?path=<relative-path>`
 - `POST /office/onlyoffice/callback`
+- `POST /office/pdf/preview`
+- `POST /office/pdf/annotate`
+- `POST /office/pdf/replace`
+- `POST /office/pdf/save-version`
 
 ## Desktop Local IPC (Windows First)
 
@@ -121,31 +152,21 @@ This section is for desktop local process coordination, not core HTTP.
 ### Command Bus
 
 - Endpoint: `\\.\pipe\WorkDeskStudio.CommandBus`
-- Request:
-
-```json
-{
-  "type": "open_run",
-  "payload": { "run_id": "run-123" },
-  "request_id": "uuid"
-}
-```
-
-- Response:
-
-```json
-{
-  "ok": true,
-  "error": null
-}
-```
+- Commands:
+  - `open`
+  - `open_run`
+  - `open_workflow`
+  - `run_workflow`
 
 ### Automation Channel
 
 - Endpoint: `\\.\pipe\WorkDeskStudio.Automation`
 - Supported request types:
   - `get_state`
+  - `get_pending_choice_prompt`
   - `refresh_runs`
   - `dispatch_command`
   - `cancel_selected_run`
   - `retry_selected_run`
+  - `submit_choice_prompt_option`
+  - `submit_choice_prompt_text`

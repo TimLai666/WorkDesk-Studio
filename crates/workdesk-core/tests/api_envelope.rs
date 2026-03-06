@@ -183,3 +183,101 @@ async fn onlyoffice_callback_uses_envelope() {
     assert_eq!(payload["data"]["accepted"], true);
     assert!(payload["error"].is_null());
 }
+
+#[tokio::test]
+async fn workbench_session_routes_use_envelope() {
+    let app = setup_router().await;
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/agent/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                      "title": "Workbench",
+                      "config": {
+                        "model": "gpt-5.4",
+                        "model_reasoning_effort": "high",
+                        "speed": true,
+                        "plan_mode": true
+                      },
+                      "last_active_panel": "runs"
+                    }"#,
+                ))
+                .expect("create request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_response.status(), 200);
+
+    let create_body = to_bytes(create_response.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: Value = serde_json::from_slice(&create_body).expect("create json");
+    assert!(create_payload["error"].is_null());
+    let session_id = create_payload["data"]["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    let list_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent/sessions")
+                .body(Body::empty())
+                .expect("list request"),
+        )
+        .await
+        .expect("list response");
+    assert_eq!(list_response.status(), 200);
+    let list_body = to_bytes(list_response.into_body(), usize::MAX)
+        .await
+        .expect("list body");
+    let list_payload: Value = serde_json::from_slice(&list_body).expect("list json");
+    assert_eq!(list_payload["data"][0]["session_id"], session_id);
+
+    let prompt_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/agent/sessions/{session_id}/choice-prompts"
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                      "question": "Choose deployment path",
+                      "options": [
+                        {
+                          "option_id": "safe",
+                          "label": "Safe",
+                          "description": "Lower risk"
+                        },
+                        {
+                          "option_id": "fast",
+                          "label": "Fast",
+                          "description": "Faster shipping"
+                        }
+                      ],
+                      "recommended_option_id": "safe",
+                      "allow_freeform": true
+                    }"#,
+                ))
+                .expect("prompt request"),
+        )
+        .await
+        .expect("prompt response");
+    assert_eq!(prompt_response.status(), 200);
+
+    let prompt_body = to_bytes(prompt_response.into_body(), usize::MAX)
+        .await
+        .expect("prompt body");
+    let prompt_payload: Value = serde_json::from_slice(&prompt_body).expect("prompt json");
+    assert_eq!(prompt_payload["data"]["recommended_option_id"], "safe");
+    assert!(prompt_payload["error"].is_null());
+}

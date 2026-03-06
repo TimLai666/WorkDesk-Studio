@@ -1,3 +1,5 @@
+mod workbench;
+
 use crate::config::AppConfig;
 use crate::errors::{ApiHttpError, CoreError};
 use crate::repository::SqliteCoreRepository;
@@ -27,6 +29,11 @@ use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+use workbench::{
+    answer_choice_prompt, create_agent_session, create_choice_prompt, list_agent_capabilities,
+    list_agent_sessions, list_choice_prompts, list_session_messages, post_session_message,
+    update_agent_session_config,
+};
 
 #[derive(Clone)]
 struct ApiState {
@@ -61,6 +68,27 @@ pub fn build_router(service: CoreService) -> Router {
         .route("/api/v1/memory", get(list_memory).post(upsert_memory))
         .route("/api/v1/memory/export", get(export_memory))
         .route("/api/v1/memory/import", post(import_memory))
+        .route("/api/v1/agent/capabilities", get(list_agent_capabilities))
+        .route(
+            "/api/v1/agent/sessions",
+            get(list_agent_sessions).post(create_agent_session),
+        )
+        .route(
+            "/api/v1/agent/sessions/{session_id}/config",
+            patch(update_agent_session_config),
+        )
+        .route(
+            "/api/v1/agent/sessions/{session_id}/messages",
+            get(list_session_messages).post(post_session_message),
+        )
+        .route(
+            "/api/v1/agent/sessions/{session_id}/choice-prompts",
+            get(list_choice_prompts).post(create_choice_prompt),
+        )
+        .route(
+            "/api/v1/agent/sessions/{session_id}/choice-prompts/{prompt_id}/answer",
+            post(answer_choice_prompt),
+        )
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
         .route("/api/v1/runs/{run_id}/events", get(list_run_events))
