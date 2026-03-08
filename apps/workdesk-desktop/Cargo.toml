@@ -33,4 +33,6 @@ path = "../../crates/workdesk-core"
 path = "../../crates/workdesk-runner"
 
 [dev-dependencies]
+ed25519-dalek.workspace = true
+sha2.workspace = true
 tempfile.workspace = true

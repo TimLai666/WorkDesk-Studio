@@ -1,0 +1,235 @@
+name: build-msi
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_version:
+        description: "MSI product version"
+        required: true
+        default: "0.1.0"
+        type: string
+      sidecar_bundle_release_tag:
+        description: "GitHub Release tag that contains the sidecar bundle asset"
+        required: true
+        type: string
+      onlyoffice_bundle_release_tag:
+        description: "GitHub Release tag that contains the OnlyOffice bundle asset"
+        required: true
+        type: string
+      bundle_repository:
+        description: "Repository that hosts the bundle release assets (owner/repo). Leave empty to use this repo."
+        required: false
+        default: ""
+        type: string
+      sidecar_bundle_asset_name:
+        description: "Sidecar bundle asset file name"
+        required: false
+        default: "sidecar-bundle.zip"
+        type: string
+      onlyoffice_bundle_asset_name:
+        description: "OnlyOffice bundle asset file name"
+        required: false
+        default: "onlyoffice-bundle.zip"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-msi:
+    runs-on: windows-latest
+    env:
+      WORKDESK_ENABLE_AUTOMATION: "1"
+      BUNDLE_REPOSITORY: ${{ inputs.bundle_repository != '' && inputs.bundle_repository || github.repository }}
+      GH_TOKEN: ${{ secrets.BUNDLE_DOWNLOAD_TOKEN != '' && secrets.BUNDLE_DOWNLOAD_TOKEN || github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenSpec CLI
+        run: npm install -g @fission-ai/openspec@latest
+
+      - name: Install WiX Toolset v3
+        shell: powershell
+        run: |
+          choco install wixtoolset --version=3.14.1.20250415 -y --no-progress
+          $wixRoot = Get-ChildItem "${env:ProgramFiles(x86)}" -Directory -Filter "WiX Toolset v3*" |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $wixRoot) {
+            throw "WiX Toolset v3 installation directory not found after Chocolatey install."
+          }
+          $wixBin = Join-Path $wixRoot.FullName "bin"
+          if (-not (Test-Path (Join-Path $wixBin "candle.exe"))) {
+            throw "candle.exe not found in $wixBin"
+          }
+          if (-not (Test-Path (Join-Path $wixBin "light.exe"))) {
+            throw "light.exe not found in $wixBin"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
+
+      - name: Validate release preflight
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\windows\preflight-release.ps1 -RequireWix
+
+      - name: Run regression checks
+        shell: powershell
+        run: |
+          cargo test --workspace --no-fail-fast
+          python scripts/check_docs_sync.py
+          openspec validate --changes --strict
+          openspec validate --specs --strict
+
+      - name: Download sidecar bundle
+        shell: powershell
+        run: |
+          $targetDir = Join-Path $env:RUNNER_TEMP "sidecar-download"
+          New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+          gh release download "${{ inputs.sidecar_bundle_release_tag }}" `
+            --repo "$env:BUNDLE_REPOSITORY" `
+            --pattern "${{ inputs.sidecar_bundle_asset_name }}" `
+            --dir $targetDir `
+            --clobber
+
+      - name: Download OnlyOffice bundle
+        shell: powershell
+        run: |
+          $targetDir = Join-Path $env:RUNNER_TEMP "onlyoffice-download"
+          New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+          gh release download "${{ inputs.onlyoffice_bundle_release_tag }}" `
+            --repo "$env:BUNDLE_REPOSITORY" `
+            --pattern "${{ inputs.onlyoffice_bundle_asset_name }}" `
+            --dir $targetDir `
+            --clobber
+
+      - name: Normalize sidecar bundle
+        id: normalize-sidecar
+        shell: powershell
+        run: |
+          function Resolve-BundleRoot {
+            param(
+              [Parameter(Mandatory = $true)]
+              [string]$Root,
+              [Parameter(Mandatory = $true)]
+              [string[]]$RequiredRelativePaths
+            )
+
+            $candidates = @((Get-Item $Root)) + @(Get-ChildItem -Path $Root -Directory -Recurse -Force | Sort-Object FullName)
+            foreach ($candidate in $candidates) {
+              $matches = $true
+              foreach ($required in $RequiredRelativePaths) {
+                if (-not (Test-Path (Join-Path $candidate.FullName $required))) {
+                  $matches = $false
+                  break
+                }
+              }
+              if ($matches) {
+                return $candidate.FullName
+              }
+            }
+            throw "Bundle structure invalid under $Root. Required paths: $($RequiredRelativePaths -join ', ')"
+          }
+
+          $downloadDir = Join-Path $env:RUNNER_TEMP "sidecar-download"
+          $archive = Get-ChildItem -Path $downloadDir -File | Select-Object -First 1
+          if (-not $archive) {
+            throw "Sidecar bundle download produced no file."
+          }
+          if ($archive.Extension -ne ".zip") {
+            throw "Unsupported sidecar bundle archive: $($archive.Name). Expected .zip"
+          }
+          $extractDir = Join-Path $env:RUNNER_TEMP "sidecar-extracted"
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          Expand-Archive -Path $archive.FullName -DestinationPath $extractDir -Force
+          $bundleRoot = Resolve-BundleRoot -Root $extractDir -RequiredRelativePaths @("node\node.exe", "sidecar.js")
+          "bundle_dir=$bundleRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Normalize OnlyOffice bundle
+        id: normalize-onlyoffice
+        shell: powershell
+        run: |
+          function Resolve-BundleRoot {
+            param(
+              [Parameter(Mandatory = $true)]
+              [string]$Root,
+              [Parameter(Mandatory = $true)]
+              [string[]]$RequiredRelativePaths
+            )
+
+            $candidates = @((Get-Item $Root)) + @(Get-ChildItem -Path $Root -Directory -Recurse -Force | Sort-Object FullName)
+            foreach ($candidate in $candidates) {
+              $matches = $true
+              foreach ($required in $RequiredRelativePaths) {
+                if (-not (Test-Path (Join-Path $candidate.FullName $required))) {
+                  $matches = $false
+                  break
+                }
+              }
+              if ($matches) {
+                return $candidate.FullName
+              }
+            }
+            throw "Bundle structure invalid under $Root. Required paths: $($RequiredRelativePaths -join ', ')"
+          }
+
+          $downloadDir = Join-Path $env:RUNNER_TEMP "onlyoffice-download"
+          $archive = Get-ChildItem -Path $downloadDir -File | Select-Object -First 1
+          if (-not $archive) {
+            throw "OnlyOffice bundle download produced no file."
+          }
+          if ($archive.Extension -ne ".zip") {
+            throw "Unsupported OnlyOffice bundle archive: $($archive.Name). Expected .zip"
+          }
+          $extractDir = Join-Path $env:RUNNER_TEMP "onlyoffice-extracted"
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          Expand-Archive -Path $archive.FullName -DestinationPath $extractDir -Force
+          $bundleRoot = Resolve-BundleRoot -Root $extractDir -RequiredRelativePaths @("documentserver.exe")
+          "bundle_dir=$bundleRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Build MSI
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\windows\build-installer.ps1 `
+            -ProductVersion "${{ inputs.product_version }}" `
+            -SidecarBundleDir "${{ steps.normalize-sidecar.outputs.bundle_dir }}" `
+            -OnlyOfficeBundleDir "${{ steps.normalize-onlyoffice.outputs.bundle_dir }}" `
+            -BuildMsi
+
+      - name: Verify MSI output
+        shell: powershell
+        run: |
+          $msiPath = Join-Path $PWD "dist\windows\WorkDeskStudio-${{ inputs.product_version }}.msi"
+          if (-not (Test-Path $msiPath)) {
+            throw "MSI not produced at expected path: $msiPath"
+          }
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workdesk-msi-${{ inputs.product_version }}
+          path: |
+            dist/windows/WorkDeskStudio-${{ inputs.product_version }}.msi
+            dist/windows/Payload.wxs
+            dist/windows/payload/**
+          if-no-files-found: error

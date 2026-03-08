@@ -6,11 +6,13 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 use workdesk_core::{run_server, AppConfig};
 use workdesk_desktop::api_client::ApiClient;
+use workdesk_desktop::app_updater::DesktopAppUpdater;
 use workdesk_desktop::automation::AutomationServer;
 use workdesk_desktop::command::DesktopCli;
 use workdesk_desktop::command_bus::{CommandBusClient, CommandBusServer};
 use workdesk_desktop::controller::DesktopAppController;
 use workdesk_desktop::onlyoffice::{OnlyOfficeLauncher, OnlyOfficeLauncherConfig};
+use workdesk_desktop::runtime_bootstrap::RuntimeBootstrapper;
 use workdesk_desktop::sidecar_supervisor::{SidecarSupervisor, SidecarSupervisorConfig};
 use workdesk_desktop::single_instance::{acquire_single_instance, InstanceAcquireResult};
 use workdesk_desktop::ui;
@@ -34,10 +36,20 @@ async fn main() -> Result<()> {
     let locale = std::env::var("WORKDESK_LOCALE").unwrap_or_else(|_| "zh-TW".into());
     let bundle = load_locale_bundle(&locale)?;
     let app_config = AppConfig::from_env()?;
+    let seeded = RuntimeBootstrapper::new(app_config.clone())
+        .ensure_seeded()
+        .await
+        .context("seed bundled runtimes")?;
     let sidecar_config = SidecarSupervisorConfig::from_app_config(&app_config);
     let onlyoffice_config = OnlyOfficeLauncherConfig::from_app_config(&app_config);
     std::env::set_var("WORKDESK_SIDECAR_ENDPOINT", &sidecar_config.endpoint);
     info!("starting {}", bundle.app_name);
+    if seeded.seeded_sidecar {
+        info!("seeded bundled sidecar runtime");
+    }
+    if seeded.seeded_onlyoffice {
+        info!("seeded bundled onlyoffice runtime");
+    }
 
     let instance_guard = match acquire_single_instance()? {
         InstanceAcquireResult::Primary(guard) => guard,
@@ -115,6 +127,16 @@ async fn main() -> Result<()> {
     let controller = DesktopAppController::new(Arc::new(api_client.clone()));
     controller.bootstrap().await?;
     controller.dispatch_command(cli.command.clone()).await?;
+
+    if DesktopAppUpdater::from_app_config(&app_config)
+        .await?
+        .is_some()
+    {
+        info!(
+            "app updater configured for channel {}",
+            app_config.app_update_channel
+        );
+    }
 
     let sidecar_controller = controller.clone();
     background.push(tokio::spawn(async move {

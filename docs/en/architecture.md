@@ -3,84 +3,61 @@
 ## Runtime Topology
 
 - `apps/workdesk-desktop`
-  - Single Windows-first binary for GUI and CLI entrypoints.
-  - Local mode starts core API, runner loop, sidecar supervisor, and OnlyOffice launcher from the desktop process.
-  - Remote mode keeps the same shell while connecting to an external core service.
+  - Windows-first GPUI shell and CLI entrypoint in one binary.
+  - Local mode starts the core API, runner daemon, sidecar supervisor, and OnlyOffice launcher.
+  - Remote mode keeps the same shell while targeting an external core service.
 - `crates/workdesk-core`
-  - HTTP API for auth, workflows, proposals, runs, skills, memory, filesystem, office, updater metadata, and the native workbench session surface.
+  - HTTP API for auth, workflows, proposals, runs, skills, memory, filesystem, office flows, and workbench session persistence.
 - `crates/workdesk-runner`
-  - Workflow runner daemon that claims queued runs, materializes run skill snapshots, executes DAG nodes, and records run/node state.
-  - Applies node-level retry/backoff policy from `workflow_nodes.config_json`.
-  - Applies `CodeNodeSpec` execution fields (`language`, `entry`, `deps`, `timeout_sec`, `resource_limits`) during `CodeExec`.
+  - Claims queued runs, materializes run skill snapshots, executes DAG nodes, and records run/node lifecycle state.
 
-## Desktop Product Layer
+## Desktop Runtime Bootstrap
 
-- `DesktopAppController`
-  - Central command/state/view coordinator.
-  - Owns run monitoring, canvas state, files, office state, native workbench session state, choice prompts, and diagnostics.
-- Single-instance shell
-  - Mutex: `Global\WorkDeskStudio.Singleton`
-  - Command bus: `\\.\pipe\WorkDeskStudio.CommandBus`
-  - Automation bus: `\\.\pipe\WorkDeskStudio.Automation`
-- GPUI + `gpui-component`
-  - Main shell is a Codex-style workbench.
-  - Left side shows sessions and capability context.
-  - Center shows composer-style controls and session messages.
-  - Right side keeps run, file, and office context panels available from the same shell.
-  - Canvas panel supports visual drag-drop node positioning, keyboard move shortcuts, align/distribute actions, and persisted coordinates.
+- `AppConfig` now resolves:
+  - `install_root`
+  - `bundled_sidecar_dir`
+  - `bundled_onlyoffice_dir`
+  - `sidecar_script_path`
+  - app update feed/key locations
+- `RuntimeBootstrapper`
+  - Seeds bundled sidecar assets from the install directory into `%LOCALAPPDATA%\WorkDeskStudio\sidecar\...`
+  - Seeds bundled OnlyOffice assets from the install directory into `%LOCALAPPDATA%\WorkDeskStudio\onlyoffice\...`
+  - Is idempotent and safe to re-run on startup
 
-## Local Runtime Supervisors
+The desktop process performs bootstrap before supervisors start. This keeps release installs and first-run recovery on one path instead of splitting behavior between installer-time and runtime-only assumptions.
 
-- Sidecar supervisor
-  - Watches bundled `node.exe + sidecar.js`.
-  - Emits `SIDECAR_UNAVAILABLE` when runtime files are missing or health checks fail.
-- OnlyOffice launcher
-  - On first run, can copy bundled Document Server runtime into app-scoped runtime via `WORKDESK_ONLYOFFICE_BUNDLE_DIR`.
-  - Watches the configured Document Server binary and health endpoint.
-  - Emits `DOCSERVER_UNAVAILABLE` when runtime files are missing or health checks fail.
-  - Office panel uses embedded WebView for DOCX/XLSX/PPTX editing URL flow.
+## Release Packaging
 
-## Persistence and Domain State
+- `scripts/windows/preflight-release.ps1`
+  - Checks Rust target availability
+  - Resolves `fxc.exe`
+  - Resolves WiX tools when MSI authoring is requested
+- `scripts/windows/build-installer.ps1`
+  - Builds `workdesk-desktop`, `workdesk-core`, and `workdesk-runner` in release mode
+  - Stages a full payload under `dist/windows/payload`
+  - Copies bundled sidecar, OnlyOffice, update assets, and toolchain bootstrap files
+  - Optionally runs WiX authoring to produce the MSI
+- `scripts/windows/wix/Product.wxs`
+  - Uses per-user installation
+  - Installs under `%LOCALAPPDATA%\Programs\WorkDesk Studio`
+  - Adds Start Menu shortcut and upgrade registration
 
-- Local persistence uses `sqlx + SQLite`.
-- Default Windows database path:
-  - `%LOCALAPPDATA%\WorkDeskStudio\data\workdesk.db`
+## Update and Toolchain Separation
 
-Primary persisted areas:
+- App updates
+  - `AppUpdateFeed` and `AppUpdateManifest` verify Ed25519 signatures and package SHA-256
+  - `DesktopAppUpdater` loads the selected channel and prepares verified installers for handoff to Windows install flow
+- Toolchain updates
+  - Stay under the runner-managed app-scoped toolchain root
+  - Keep rollback separate from app binary replacement
 
-- Auth: `users`, `sessions`
-- Workflow: `workflows`, `workflow_nodes`, `workflow_edges`, `workflow_proposals`
-- Workbench: `agent_workspace_sessions`, `agent_workspace_messages`, `agent_workspace_choice_prompts`, `agent_workspace_choice_prompt_options`, `agent_workspace_preferences`
-- Knowledge: `skills`, `memory_records`
-- Runs: `workflow_runs`, `workflow_run_events`, `workflow_run_nodes`, `workflow_run_skill_snapshots`, `runner_leases`
-- Office history: `office_versions`
-
-Workflow persistence also stores:
-
-- canvas coordinates per node: `x`, `y`
-- node config JSON: `config_json`
-- workflow agent defaults JSON: `agent_defaults_json`
-
-## Native Codex Mapping
-
-- Session config uses native field names:
-  - `model`
-  - `model_reasoning_effort`
-  - `speed`
-  - `plan_mode`
-- Workflow defaults only persist:
-  - `model`
-  - `model_reasoning_effort`
-- `speed` remains session-scoped and capability-gated.
-- Choice prompts map to the Codex request-user-input interaction model rather than diagnostics.
+This separation avoids app upgrades overwriting managed toolchains and avoids toolchain rollbacks affecting the installed desktop binaries.
 
 ## Diagnostics
 
 - `RUNNER_UNAVAILABLE`
-  - A run remains queued for more than 90 seconds without being claimed.
+  - A queued run is not claimed in time
 - `SIDECAR_UNAVAILABLE`
-  - Sidecar runtime is missing or unhealthy.
+  - Bundled or seeded sidecar runtime is missing or unhealthy
 - `DOCSERVER_UNAVAILABLE`
-  - Embedded document server is missing or unhealthy.
-
-All diagnostics are surfaced through the desktop UI and automation snapshot.
+  - Bundled or seeded OnlyOffice runtime is missing or unhealthy

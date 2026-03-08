@@ -1,0 +1,48 @@
+name: prepare-onlyoffice-bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_version:
+        description: "Bundle version used in the GitHub Release tag"
+        required: true
+        type: string
+      source_url:
+        description: "Local path or HTTPS URL to a .zip or directory that contains a runnable documentserver.exe runtime tree."
+        required: false
+        default: ""
+        type: string
+      release_tag:
+        description: "Override release tag. Defaults to bundles/onlyoffice/<bundle_version>."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-onlyoffice-bundle:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare and publish OnlyOffice bundle
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\windows\prepare-onlyoffice-bundle.ps1 `
+            -BundleVersion "${{ inputs.bundle_version }}" `
+            -ReleaseTag "${{ inputs.release_tag }}" `
+            -Repository "${{ github.repository }}" `
+            -SourceUrl "${{ inputs.source_url }}" `
+            -UploadToRelease
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onlyoffice-bundle-${{ inputs.bundle_version }}
+          path: dist/windows/bundles/onlyoffice/${{ inputs.bundle_version }}/onlyoffice-bundle.zip
+          if-no-files-found: error

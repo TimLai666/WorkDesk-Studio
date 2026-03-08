@@ -1,6 +1,6 @@
 use crate::controller::{DesktopAppController, UiDiagnostic};
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::{Child, Command};
@@ -19,18 +19,9 @@ pub struct SidecarSupervisorConfig {
 
 impl SidecarSupervisorConfig {
     pub fn from_app_config(config: &AppConfig) -> Self {
-        let script_path = std::env::var("WORKDESK_SIDECAR_SCRIPT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                config
-                    .sidecar_path
-                    .parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .join("sidecar.js")
-            });
         Self {
             command_path: config.sidecar_path.clone(),
-            script_path,
+            script_path: config.sidecar_script_path.clone(),
             endpoint: std::env::var("WORKDESK_SIDECAR_ENDPOINT")
                 .unwrap_or_else(|_| default_sidecar_endpoint()),
             probe_interval: Duration::from_secs(3),

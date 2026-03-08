@@ -178,7 +178,10 @@ fn app_config_allows_db_override() {
     let old_manifest = std::env::var("WORKDESK_TOOLCHAIN_MANIFEST").ok();
     let old_app_channel = std::env::var("WORKDESK_APP_UPDATE_CHANNEL").ok();
     let old_toolchain_channel = std::env::var("WORKDESK_TOOLCHAIN_UPDATE_CHANNEL").ok();
+    let old_install_root = std::env::var("WORKDESK_INSTALL_ROOT").ok();
+    let old_app_update_feed = std::env::var("WORKDESK_APP_UPDATE_FEED").ok();
     let db_override = std::env::temp_dir().join("workdesk-config-test.db");
+    let install_root = std::env::temp_dir().join("workdesk-install-root");
     std::env::set_var("WORKDESK_DB_PATH", &db_override);
     std::env::set_var("WORKDESK_CORE_BIND", "127.0.0.1:4100");
     std::env::set_var("WORKDESK_WORKSPACE_ROOT", ".");
@@ -189,11 +192,33 @@ fn app_config_allows_db_override() {
     std::env::set_var("WORKDESK_TOOLCHAIN_MANIFEST", "C:/tmp/toolchains.json");
     std::env::set_var("WORKDESK_APP_UPDATE_CHANNEL", "beta");
     std::env::set_var("WORKDESK_TOOLCHAIN_UPDATE_CHANNEL", "canary");
+    std::env::set_var("WORKDESK_INSTALL_ROOT", &install_root);
+    std::env::set_var(
+        "WORKDESK_APP_UPDATE_FEED",
+        "https://updates.example.com/workdesk/stable.json",
+    );
     let cfg = AppConfig::from_env().expect("load app config");
     assert_eq!(cfg.db_path, db_override);
     assert_eq!(cfg.onlyoffice_port, 9001);
     assert_eq!(cfg.app_update_channel, "beta");
     assert_eq!(cfg.toolchain_update_channel, "canary");
+    assert_eq!(cfg.install_root, install_root);
+    assert_eq!(
+        cfg.bundled_sidecar_dir,
+        install_root.join("resources").join("sidecar")
+    );
+    assert_eq!(
+        cfg.bundled_onlyoffice_dir,
+        install_root.join("resources").join("onlyoffice")
+    );
+    assert_eq!(
+        cfg.sidecar_script_path,
+        std::path::PathBuf::from("C:/tmp/sidecar").join("sidecar.js")
+    );
+    assert_eq!(
+        cfg.app_update_feed_url.as_deref(),
+        Some("https://updates.example.com/workdesk/stable.json")
+    );
 
     restore_var("WORKDESK_DB_PATH", old_db);
     restore_var("WORKDESK_CORE_BIND", old_bind);
@@ -205,6 +230,8 @@ fn app_config_allows_db_override() {
     restore_var("WORKDESK_TOOLCHAIN_MANIFEST", old_manifest);
     restore_var("WORKDESK_APP_UPDATE_CHANNEL", old_app_channel);
     restore_var("WORKDESK_TOOLCHAIN_UPDATE_CHANNEL", old_toolchain_channel);
+    restore_var("WORKDESK_INSTALL_ROOT", old_install_root);
+    restore_var("WORKDESK_APP_UPDATE_FEED", old_app_update_feed);
 }
 
 fn restore_var(key: &str, value: Option<String>) {

@@ -1,9 +1,11 @@
 pub mod api_client;
+pub mod app_updater;
 pub mod automation;
 pub mod command;
 pub mod command_bus;
 pub mod controller;
 pub mod onlyoffice;
+pub mod runtime_bootstrap;
 pub mod sidecar_supervisor;
 pub mod single_instance;
 pub mod ui;

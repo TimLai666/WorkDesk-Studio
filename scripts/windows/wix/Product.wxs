@@ -10,7 +10,8 @@
     <Package
       InstallerVersion="500"
       Compressed="yes"
-      InstallScope="perMachine"
+      InstallScope="perUser"
+      InstallPrivileges="limited"
       Platform="x64" />
 
     <MajorUpgrade
@@ -21,13 +22,52 @@
     <MediaTemplate EmbedCab="yes" />
 
     <Feature Id="MainFeature" Title="WorkDesk Studio" Level="1">
+      <ComponentRef Id="ApplicationShortcuts" />
+      <ComponentRef Id="InstallRootRegistration" />
       <ComponentGroupRef Id="PayloadComponents" />
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLDIR" Name="WorkDesk Studio" />
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="LocalProgramsFolder" Name="Programs">
+          <Directory Id="INSTALLDIR" Name="WorkDesk Studio" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="WorkDesk Studio" />
       </Directory>
     </Directory>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcuts" Guid="*">
+        <Shortcut
+          Id="ApplicationStartMenuShortcut"
+          Name="WorkDesk Studio"
+          Description="Launch WorkDesk Studio"
+          Target="[INSTALLDIR]workdesk-desktop.exe"
+          WorkingDirectory="INSTALLDIR" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\WorkDeskStudio"
+          Name="HasShortcuts"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="InstallRootRegistration" Guid="*">
+        <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\WorkDeskStudio"
+          Name="InstallRoot"
+          Type="string"
+          Value="[INSTALLDIR]"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
   </Product>
 </Wix>

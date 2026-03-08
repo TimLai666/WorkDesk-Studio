@@ -1,0 +1,54 @@
+name: prepare-sidecar-bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_version:
+        description: "Bundle version used in the GitHub Release tag"
+        required: true
+        type: string
+      node_version:
+        description: "Exact Node 22 Windows x64 version to bundle"
+        required: false
+        default: "22.22.1"
+        type: string
+      release_tag:
+        description: "Override release tag. Defaults to bundles/sidecar/<bundle_version>."
+        required: false
+        default: ""
+        type: string
+      sidecar_script_url:
+        description: "HTTPS URL or local repo path for sidecar.js. Leave empty only if the repo contains a canonical sidecar.js build output."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-sidecar-bundle:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare and publish sidecar bundle
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\windows\prepare-sidecar-bundle.ps1 `
+            -BundleVersion "${{ inputs.bundle_version }}" `
+            -NodeVersion "${{ inputs.node_version }}" `
+            -ReleaseTag "${{ inputs.release_tag }}" `
+            -Repository "${{ github.repository }}" `
+            -SidecarScriptUrl "${{ inputs.sidecar_script_url }}" `
+            -UploadToRelease
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-bundle-${{ inputs.bundle_version }}
+          path: dist/windows/bundles/sidecar/${{ inputs.bundle_version }}/sidecar-bundle.zip
+          if-no-files-found: error
